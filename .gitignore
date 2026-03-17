@@ -1,0 +1,22 @@
+# macOS
+.DS_Store
+
+# Swift Package Manager
+.build/
+.swiftpm/
+Packages/
+
+# Xcode build output
+DerivedData/
+
+# Xcode user-specific files
+xcuserdata/
+*.xcuserstate
+
+# Xcode-generated SwiftPM resolution inside workspace
+*.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved
+
+# Temporary editor and merge files
+*.swp
+*.swo
+*.orig

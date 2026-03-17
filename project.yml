@@ -1,0 +1,26 @@
+name: CommandHub
+options:
+  bundleIdPrefix: ttt
+packages:
+  HotKey:
+    url: https://github.com/soffes/HotKey
+    from: 0.2.1
+settings:
+  base:
+    PRODUCT_BUNDLE_IDENTIFIER: ttt.CommandHub
+targets:
+  CommandHub:
+    type: application
+    platform: macOS
+    deploymentTarget: "13.0"
+    sources:
+      - Sources/CommandHub
+    dependencies:
+      - package: HotKey
+    settings:
+      base:
+        PRODUCT_NAME: CommandHub
+        INFOPLIST_KEY_CFBundleDisplayName: CommandHub
+        INFOPLIST_KEY_LSApplicationCategoryType: public.app-category.developer-tools
+        INFOPLIST_KEY_NSHighResolutionCapable: true
+        GENERATE_INFOPLIST_FILE: YES
