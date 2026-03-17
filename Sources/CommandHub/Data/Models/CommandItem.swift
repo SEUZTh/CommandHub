@@ -6,4 +6,5 @@ struct CommandItem: Identifiable, Hashable {
     let usageCount: Int
     let lastUsedAt: TimeInterval?
     let createdAt: TimeInterval
+    let contexts: [CommandContextStat]
 }

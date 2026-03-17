@@ -14,6 +14,7 @@
 		641464EE5F60896B6A5DC3AB /* CommandHubApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = ADB2D235B4B03F6B401DD208 /* CommandHubApp.swift */; };
 		6C3E9FD6B3C9EA5A0042950C /* SingleInstanceService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4D62FB3D21557E0F31FC8750 /* SingleInstanceService.swift */; };
 		810AE6BF3619478061AC5128 /* CommandItem.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3B91530037A9EB607A548381 /* CommandItem.swift */; };
+		8134DF6A0D0E4D319AF74C61 /* CommandContextStat.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7F7B0D49553D41B6B4905F1B /* CommandContextStat.swift */; };
 		849D6A2C83292889AC88FDDE /* LauncherWindow.swift in Sources */ = {isa = PBXBuildFile; fileRef = E07C7D7996383E011543EDAE /* LauncherWindow.swift */; };
 		8FA77F263C420AC967ACF59C /* ContextResolver.swift in Sources */ = {isa = PBXBuildFile; fileRef = 688F519A5C5811CEC30030CB /* ContextResolver.swift */; };
 		B9163CE875580609A39B9C27 /* LauncherView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8523F1DC1AB44C36C5596B8B /* LauncherView.swift */; };
@@ -22,7 +23,9 @@
 		D6ED32CD975BB93897FE531C /* SearchService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 52FBE6EA3BCB779C158C64B9 /* SearchService.swift */; };
 		DA171ADA3C11D133694B2E59 /* LauncherViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0BECDECFA01126A46FC67040 /* LauncherViewModel.swift */; };
 		E71C6AA04C0D6984C3A243D6 /* ClipboardService.swift in Sources */ = {isa = PBXBuildFile; fileRef = EB44D7564AAAF82A254CFA17 /* ClipboardService.swift */; };
+		E9650FEDE6BC4B169C60B62F /* SearchResultItem.swift in Sources */ = {isa = PBXBuildFile; fileRef = 786986AB40ED4301815E15D4 /* SearchResultItem.swift */; };
 		F05244544550F8DEC50068EC /* StorageService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 74DA424F04CF0CD6A21BD8D0 /* StorageService.swift */; };
+		FB4085836AE84CC3AA92949D /* SearchScope.swift in Sources */ = {isa = PBXBuildFile; fileRef = DF1E774278ED4FCB98C5B549 /* SearchScope.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -34,12 +37,15 @@
 		688F519A5C5811CEC30030CB /* ContextResolver.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContextResolver.swift; sourceTree = "<group>"; };
 		6C080D5F345982D509651D4B /* DatabaseManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DatabaseManager.swift; sourceTree = "<group>"; };
 		74DA424F04CF0CD6A21BD8D0 /* StorageService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StorageService.swift; sourceTree = "<group>"; };
+		786986AB40ED4301815E15D4 /* SearchResultItem.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SearchResultItem.swift; sourceTree = "<group>"; };
 		7C03AE136EACF028F1821EDD /* CommandParser.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CommandParser.swift; sourceTree = "<group>"; };
+		7F7B0D49553D41B6B4905F1B /* CommandContextStat.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CommandContextStat.swift; sourceTree = "<group>"; };
 		8523F1DC1AB44C36C5596B8B /* LauncherView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LauncherView.swift; sourceTree = "<group>"; };
 		A6E4E68E8A4ADB6ABCD85F10 /* CommandHub.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = CommandHub.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		ADB2D235B4B03F6B401DD208 /* CommandHubApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CommandHubApp.swift; sourceTree = "<group>"; };
 		C1594DC15678752193FE984E /* AppDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppDelegate.swift; sourceTree = "<group>"; };
 		C595EB57CF8E0858EAFCBE1F /* HotkeyService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HotkeyService.swift; sourceTree = "<group>"; };
+		DF1E774278ED4FCB98C5B549 /* SearchScope.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SearchScope.swift; sourceTree = "<group>"; };
 		E07C7D7996383E011543EDAE /* LauncherWindow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LauncherWindow.swift; sourceTree = "<group>"; };
 		EB44D7564AAAF82A254CFA17 /* ClipboardService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClipboardService.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
@@ -140,7 +146,10 @@
 			isa = PBXGroup;
 			children = (
 				4DF838B2C644A0BF7D567E02 /* CommandContext.swift */,
+				7F7B0D49553D41B6B4905F1B /* CommandContextStat.swift */,
 				3B91530037A9EB607A548381 /* CommandItem.swift */,
+				786986AB40ED4301815E15D4 /* SearchResultItem.swift */,
+				DF1E774278ED4FCB98C5B549 /* SearchScope.swift */,
 			);
 			path = Models;
 			sourceTree = "<group>";
@@ -238,6 +247,7 @@
 				226635E7713FF04C5740FA41 /* AppDelegate.swift in Sources */,
 				E71C6AA04C0D6984C3A243D6 /* ClipboardService.swift in Sources */,
 				207230B0F48D4534E2D1352C /* CommandContext.swift in Sources */,
+				8134DF6A0D0E4D319AF74C61 /* CommandContextStat.swift in Sources */,
 				641464EE5F60896B6A5DC3AB /* CommandHubApp.swift in Sources */,
 				810AE6BF3619478061AC5128 /* CommandItem.swift in Sources */,
 				3DFDE632B8F0E70A01B6A81D /* CommandParser.swift in Sources */,
@@ -247,6 +257,8 @@
 				B9163CE875580609A39B9C27 /* LauncherView.swift in Sources */,
 				DA171ADA3C11D133694B2E59 /* LauncherViewModel.swift in Sources */,
 				849D6A2C83292889AC88FDDE /* LauncherWindow.swift in Sources */,
+				E9650FEDE6BC4B169C60B62F /* SearchResultItem.swift in Sources */,
+				FB4085836AE84CC3AA92949D /* SearchScope.swift in Sources */,
 				D6ED32CD975BB93897FE531C /* SearchService.swift in Sources */,
 				6C3E9FD6B3C9EA5A0042950C /* SingleInstanceService.swift in Sources */,
 				F05244544550F8DEC50068EC /* StorageService.swift in Sources */,
@@ -262,6 +274,7 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				COMBINE_HIDPI_IMAGES = YES;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_NSAppleEventsUsageDescription = "CommandHub reads the current browser tab URL to rank commands for the active environment.";
 				INFOPLIST_KEY_CFBundleDisplayName = CommandHub;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.developer-tools";
 				INFOPLIST_KEY_NSHighResolutionCapable = YES;
@@ -400,6 +413,7 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				COMBINE_HIDPI_IMAGES = YES;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_NSAppleEventsUsageDescription = "CommandHub reads the current browser tab URL to rank commands for the active environment.";
 				INFOPLIST_KEY_CFBundleDisplayName = CommandHub;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.developer-tools";
 				INFOPLIST_KEY_NSHighResolutionCapable = YES;

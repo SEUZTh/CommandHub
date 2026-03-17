@@ -5,8 +5,11 @@ final class LauncherViewModel: ObservableObject {
     typealias Executor = (@escaping () -> Void) -> Void
 
     @Published var query = ""
-    @Published var results: [CommandItem] = []
+    @Published var results: [SearchResultItem] = []
     @Published var selection: String?
+    @Published var scope: SearchScope = .all
+    @Published private(set) var contextStatusText = "Current: Unknown, no web context"
+    @Published private(set) var isCurrentEnvOnlyAvailable = false
 
     private static let defaultSearchQueue = DispatchQueue(
         label: "commandhub.launcher.search",
@@ -16,15 +19,18 @@ final class LauncherViewModel: ObservableObject {
     private let storageService: CommandStoring
     private let searchService: CommandSearching
     private let clipboardService: ClipboardWriting
+    private let contextResolver: ContextResolving
     private let searchExecutor: Executor
     private let resultExecutor: Executor
 
     private var searchGeneration = 0
+    private var currentContext: CommandContext?
 
     init(
         storageService: CommandStoring = StorageService.shared,
         searchService: CommandSearching = SearchService.shared,
         clipboardService: ClipboardWriting = ClipboardService.shared,
+        contextResolver: ContextResolving = ContextResolver.shared,
         searchExecutor: @escaping Executor = { work in
             defaultSearchQueue.async(execute: work)
         },
@@ -35,6 +41,7 @@ final class LauncherViewModel: ObservableObject {
         self.storageService = storageService
         self.searchService = searchService
         self.clipboardService = clipboardService
+        self.contextResolver = contextResolver
         self.searchExecutor = searchExecutor
         self.resultExecutor = resultExecutor
     }
@@ -42,18 +49,35 @@ final class LauncherViewModel: ObservableObject {
     func activate() {
         query = ""
         selection = nil
+        scope = .all
+        refreshContext()
+        search()
+    }
+
+    func setScope(_ newScope: SearchScope) {
+        let effectiveScope = newScope == .currentEnvOnly && !isCurrentEnvOnlyAvailable ? .all : newScope
+        guard scope != effectiveScope else { return }
+
+        scope = effectiveScope
         search()
     }
 
     func search() {
         let currentQuery = query
+        let currentScope = effectiveSearchScope
+        let context = currentContext
+
         searchGeneration += 1
         let generation = searchGeneration
 
         searchExecutor { [weak self] in
             guard let self else { return }
 
-            let items = self.searchService.search(query: currentQuery)
+            let items = self.searchService.search(
+                query: currentQuery,
+                currentContext: context,
+                scope: currentScope
+            )
 
             self.resultExecutor { [weak self] in
                 guard let self else { return }
@@ -68,7 +92,7 @@ final class LauncherViewModel: ObservableObject {
     func copySelectedOrFirst() {
         guard !results.isEmpty else { return }
 
-        let item: CommandItem
+        let item: SearchResultItem
         if let selection, let match = results.first(where: { $0.id == selection }) {
             item = match
         } else {
@@ -79,10 +103,14 @@ final class LauncherViewModel: ObservableObject {
         select(item)
     }
 
-    func select(_ item: CommandItem) {
+    func select(_ item: SearchResultItem) {
         selection = item.id
-        clipboardService.copyToClipboard(item.command)
-        storageService.markUsed(id: item.id)
+        clipboardService.copyToClipboard(item.command.command)
+        storageService.markUsed(
+            commandID: item.command.id,
+            matchedContextID: item.matchedContext?.id,
+            fallbackContext: currentContext
+        )
         search()
     }
 
@@ -102,6 +130,21 @@ final class LauncherViewModel: ObservableObject {
         }
 
         selection = results[nextIndex].id
+    }
+
+    private var effectiveSearchScope: SearchScope {
+        isCurrentEnvOnlyAvailable ? scope : .all
+    }
+
+    private func refreshContext() {
+        let resolution = contextResolver.resolve()
+        currentContext = resolution.context
+        contextStatusText = resolution.statusText
+        isCurrentEnvOnlyAvailable = resolution.canFilterToCurrentEnv
+
+        if !isCurrentEnvOnlyAvailable && scope == .currentEnvOnly {
+            scope = .all
+        }
     }
 
     private func updateSelectionIfNeeded() {

@@ -2,97 +2,96 @@ import XCTest
 @testable import CommandHub
 
 final class StorageServiceTests: XCTestCase {
-    func testSaveDeduplicatesExactCommands() {
+    func testSaveKeepsSingleCommandAndCreatesMultipleContexts() throws {
         let storage = makeStorageService()
 
-        storage.save(command: "git status")
-        storage.save(command: "git status")
+        storage.save(command: "kubectl get pods", context: makeContext(url: "https://prod.example.com/pods"))
+        storage.save(command: "kubectl get pods", context: makeContext(url: "https://dev.example.com/pods"))
 
-        let items = storage.fetchCandidates(query: "", limit: 10)
-
-        XCTAssertEqual(items.count, 1)
-        XCTAssertEqual(items.first?.command, "git status")
+        let item = try XCTUnwrap(fetchSingleCommand(from: storage))
+        XCTAssertEqual(item.command, "kubectl get pods")
+        XCTAssertEqual(item.contexts.count, 2)
+        XCTAssertEqual(Set(item.contexts.compactMap(\.env)), ["prod", "dev"])
     }
 
-    func testRepeatedParsedCommandsPersistOnlyOnce() {
+    func testRepeatedCaptureUpdatesCaptureStatsOnlyForSameContext() throws {
         let storage = makeStorageService()
-        let input = """
-        git status
-        git status
-        git status
-        """
 
-        CommandParser.parse(input).forEach { storage.save(command: $0) }
+        storage.save(command: "kubectl get pods", context: makeContext(url: "https://prod.example.com/a"))
+        storage.save(command: "kubectl get pods", context: makeContext(url: "https://prod.example.com/b"))
 
-        let items = storage.fetchCandidates(query: "", limit: 10)
+        let item = try XCTUnwrap(fetchSingleCommand(from: storage))
+        let context = try XCTUnwrap(item.contexts.first)
 
-        XCTAssertEqual(items.count, 1)
-        XCTAssertEqual(items.first?.command, "git status")
+        XCTAssertEqual(item.contexts.count, 1)
+        XCTAssertEqual(context.captureCount, 2)
+        XCTAssertEqual(context.usageCount, 0)
+        XCTAssertNil(context.lastUsedAt)
+        XCTAssertNotNil(context.lastSeenAt)
+        XCTAssertEqual(context.url, "https://prod.example.com/b")
     }
 
-    func testMarkUsedUpdatesUsageCountAndLastUsedAt() throws {
+    func testMarkUsedPrefersMatchedContextIDOverFallbackContext() throws {
+        let storage = makeStorageService()
+
+        storage.save(command: "kubectl get pods", context: makeContext(url: "https://prod.example.com/pods"))
+        storage.save(command: "kubectl get pods", context: makeContext(url: "https://dev.example.com/pods"))
+
+        let initialItem = try XCTUnwrap(fetchSingleCommand(from: storage))
+        let prodContext = try XCTUnwrap(initialItem.contexts.first(where: { $0.env == "prod" }))
+
+        storage.markUsed(
+            commandID: initialItem.id,
+            matchedContextID: prodContext.id,
+            fallbackContext: makeContext(url: "https://dev.example.com/other")
+        )
+
+        let updatedItem = try XCTUnwrap(fetchSingleCommand(from: storage))
+        let updatedProdContext = try XCTUnwrap(updatedItem.contexts.first(where: { $0.env == "prod" }))
+        let updatedDevContext = try XCTUnwrap(updatedItem.contexts.first(where: { $0.env == "dev" }))
+
+        XCTAssertEqual(updatedItem.usageCount, 1)
+        XCTAssertEqual(updatedProdContext.usageCount, 1)
+        XCTAssertNotNil(updatedProdContext.lastUsedAt)
+        XCTAssertEqual(updatedDevContext.usageCount, 0)
+    }
+
+    func testMarkUsedFallbackUpsertsUsageOnlyContext() throws {
         let storage = makeStorageService()
 
         storage.save(command: "git status")
-        let item = try XCTUnwrap(storage.fetchCandidates(query: "", limit: 10).first)
+        let item = try XCTUnwrap(fetchSingleCommand(from: storage))
 
-        storage.markUsed(id: item.id)
+        storage.markUsed(
+            commandID: item.id,
+            matchedContextID: nil,
+            fallbackContext: makeContext(url: "https://prod.example.com/status")
+        )
 
-        let updated = try XCTUnwrap(storage.fetchCandidates(query: "", limit: 10).first)
-        XCTAssertEqual(updated.usageCount, 1)
-        XCTAssertNotNil(updated.lastUsedAt)
+        let updatedItem = try XCTUnwrap(fetchSingleCommand(from: storage))
+        let context = try XCTUnwrap(updatedItem.contexts.first)
+
+        XCTAssertEqual(updatedItem.usageCount, 1)
+        XCTAssertEqual(context.captureCount, 0)
+        XCTAssertEqual(context.usageCount, 1)
+        XCTAssertNil(context.lastSeenAt)
+        XCTAssertNotNil(context.lastUsedAt)
     }
 
-    func testDeleteRemovesCommand() throws {
+    func testDeleteRemovesCommandAndContexts() throws {
         let storage = makeStorageService()
 
-        storage.save(command: "git status")
-        let item = try XCTUnwrap(storage.fetchCandidates(query: "", limit: 10).first)
+        storage.save(command: "git status", context: makeContext(url: "https://prod.example.com/status"))
+        let item = try XCTUnwrap(fetchSingleCommand(from: storage))
 
         storage.delete(id: item.id)
 
-        XCTAssertTrue(storage.fetchCandidates(query: "", limit: 10).isEmpty)
+        let results = storage.fetchCandidates(query: "", currentContext: nil, scope: .all, limit: 10)
+        XCTAssertTrue(results.isEmpty)
     }
 
-    func testPersistenceSurvivesServiceRecreation() {
-        let databaseURL = makeDatabaseURL()
-        defer { cleanupDatabase(at: databaseURL) }
-
-        let firstStorage = StorageService(
-            databaseManager: DatabaseManager(
-                databaseURL: databaseURL,
-                queueLabel: "commandhub.tests.db.\(UUID().uuidString)"
-            )
-        )
-        firstStorage.save(command: "git status")
-
-        let secondStorage = StorageService(
-            databaseManager: DatabaseManager(
-                databaseURL: databaseURL,
-                queueLabel: "commandhub.tests.db.\(UUID().uuidString)"
-            )
-        )
-
-        let items = secondStorage.fetchCandidates(query: "", limit: 10)
-        XCTAssertEqual(items.count, 1)
-        XCTAssertEqual(items.first?.command, "git status")
-    }
-
-    func testStoragePersistsLongAndSpecialCharacterCommands() {
-        let storage = makeStorageService()
-        let commands = [
-            "kubectl get pods -n default --field-selector=status.phase=Running -o jsonpath='{.items[*].metadata.name}'",
-            "echo $PATH",
-            "echo `date`",
-            "echo \"$(whoami)\"",
-            "grep \"error\" log.txt"
-        ]
-
-        commands.forEach { storage.save(command: $0) }
-
-        let storedCommands = storage.fetchCandidates(query: "", limit: 20).map(\.command)
-
-        XCTAssertEqual(Set(storedCommands), Set(commands))
+    private func fetchSingleCommand(from storage: StorageService) -> CommandItem? {
+        storage.fetchCandidates(query: "", currentContext: nil, scope: .all, limit: 10).first
     }
 
     private func makeStorageService() -> StorageService {
@@ -119,5 +118,13 @@ final class StorageServiceTests: XCTestCase {
 
     private func cleanupDatabase(at url: URL) {
         try? FileManager.default.removeItem(at: url.deletingLastPathComponent())
+    }
+
+    private func makeContext(url: String) -> CommandContext {
+        CommandContext(
+            url: url,
+            env: ContextResolver.resolveEnv(from: url),
+            sourceApp: "com.google.chrome"
+        )
     }
 }

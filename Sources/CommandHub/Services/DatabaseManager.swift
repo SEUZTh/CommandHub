@@ -77,25 +77,53 @@ final class DatabaseManager {
                 """
                 CREATE TABLE IF NOT EXISTS commands (
                     id TEXT PRIMARY KEY,
-                    command TEXT NOT NULL,
+                    command TEXT NOT NULL UNIQUE,
                     usage_count INTEGER DEFAULT 0,
                     last_used_at INTEGER,
-                    created_at INTEGER NOT NULL,
-                    source TEXT
+                    created_at INTEGER NOT NULL
                 );
                 """,
                 on: db
             )
 
-            // Keep pre-release databases compatible if they were created without the reserved column.
             execute(
-                "ALTER TABLE commands ADD COLUMN source TEXT;",
+                """
+                CREATE TABLE IF NOT EXISTS command_contexts (
+                    id TEXT PRIMARY KEY,
+                    command_id TEXT NOT NULL,
+                    context_key TEXT NOT NULL,
+                    domain TEXT,
+                    url TEXT,
+                    env TEXT,
+                    source_app TEXT,
+                    capture_count INTEGER NOT NULL DEFAULT 0,
+                    usage_count INTEGER NOT NULL DEFAULT 0,
+                    last_seen_at INTEGER,
+                    last_used_at INTEGER,
+                    created_at INTEGER NOT NULL
+                );
+                """,
                 on: db,
-                ignoringErrorsContaining: "duplicate column name: source"
+                ignoringErrorsContaining: nil
             )
 
             execute(
                 "CREATE INDEX IF NOT EXISTS idx_command ON commands(command);",
+                on: db
+            )
+
+            execute(
+                "CREATE INDEX IF NOT EXISTS idx_command_contexts_command_id ON command_contexts(command_id);",
+                on: db
+            )
+
+            execute(
+                "CREATE INDEX IF NOT EXISTS idx_command_contexts_env_domain ON command_contexts(env, domain, last_used_at);",
+                on: db
+            )
+
+            execute(
+                "CREATE UNIQUE INDEX IF NOT EXISTS idx_command_contexts_command_key ON command_contexts(command_id, context_key);",
                 on: db
             )
         }

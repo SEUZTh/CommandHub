@@ -11,10 +11,11 @@
 
 ## 当前计划
 
-- `V1.2`：[docs/plans/v1.2.md](/Users/zth/MyProjects/CommandHub/docs/plans/v1.2.md)
+- `V1.3`：[docs/plans/v1.3.md](/Users/zth/MyProjects/CommandHub/docs/plans/v1.3.md)
 
 ## 历史计划
 
+- `V1.2`：[docs/plans/v1.2.md](/Users/zth/MyProjects/CommandHub/docs/plans/v1.2.md)
 - `V1.1`：[docs/plans/v1.1.md](/Users/zth/MyProjects/CommandHub/docs/plans/v1.1.md)
 
 ## 后续建议

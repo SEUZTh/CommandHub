@@ -9,6 +9,11 @@ final class ClipboardService: ClipboardWriting {
 
     private var changeCount = NSPasteboard.general.changeCount
     private var timer: Timer?
+    private let contextResolver: ContextResolving
+
+    init(contextResolver: ContextResolving = ContextResolver.shared) {
+        self.contextResolver = contextResolver
+    }
 
     func copyToClipboard(_ text: String) {
         let pasteboard = NSPasteboard.general
@@ -38,7 +43,7 @@ final class ClipboardService: ClipboardWriting {
 
     private func handleClipboardText(_ text: String) {
         let commands = CommandParser.parse(text)
-        let context = ContextResolver.resolve()
+        let context = contextResolver.resolve().context
 
         commands.forEach {
             StorageService.shared.save(command: $0, context: context)

@@ -23,4 +23,5 @@ targets:
         INFOPLIST_KEY_CFBundleDisplayName: CommandHub
         INFOPLIST_KEY_LSApplicationCategoryType: public.app-category.developer-tools
         INFOPLIST_KEY_NSHighResolutionCapable: true
+        INFOPLIST_KEY_NSAppleEventsUsageDescription: CommandHub reads the current browser tab URL to rank commands for the active environment.
         GENERATE_INFOPLIST_FILE: YES

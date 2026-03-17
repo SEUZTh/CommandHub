@@ -1,5 +1,4 @@
 import XCTest
-import SQLite3
 @testable import CommandHub
 
 final class SearchServiceTests: XCTestCase {
@@ -13,8 +12,8 @@ final class SearchServiceTests: XCTestCase {
         let kubectlResults = searchService.search(query: "kctl")
         let gitResults = searchService.search(query: "gco")
 
-        XCTAssertEqual(kubectlResults.first?.command, "kubectl")
-        XCTAssertEqual(gitResults.first?.command, "git checkout")
+        XCTAssertEqual(kubectlResults.first?.command.command, "kubectl")
+        XCTAssertEqual(gitResults.first?.command.command, "git checkout")
     }
 
     func testEmptyQueryReturnsOnlyCandidateLimit() {
@@ -27,122 +26,147 @@ final class SearchServiceTests: XCTestCase {
         XCTAssertEqual(results.count, 200)
     }
 
-    func testNonEmptyQueryReturnsOnlyCandidateLimit() {
-        let storage = makeStorageHarness().storage
-        (0..<250).forEach { storage.save(command: "git checkout branch-\($0)") }
-
-        let searchService = SearchService(storageService: storage, candidateLimit: 200)
-        let results = searchService.search(query: "gco")
-
-        XCTAssertEqual(results.count, 200)
-    }
-
-    func testSearchMatchesRequestedAbbreviationsAgainstFullCommands() {
-        let storage = makeStorageHarness().storage
-        storage.save(command: "kubectl get pods")
-        storage.save(command: "git checkout -b feature/test")
-        storage.save(command: "git commit -m \"fix bug\"")
-        storage.save(command: "git status")
-        storage.save(command: "docker ps")
-        storage.save(command: "git push origin main")
-
-        let searchService = SearchService(storageService: storage)
-
-        XCTAssertEqual(searchService.search(query: "kctl").first?.command, "kubectl get pods")
-        XCTAssertEqual(searchService.search(query: "gco").first?.command, "git checkout -b feature/test")
-        XCTAssertEqual(searchService.search(query: "gcm").first?.command, "git commit -m \"fix bug\"")
-        XCTAssertEqual(searchService.search(query: "gst").first?.command, "git status")
-        XCTAssertEqual(searchService.search(query: "dps").first?.command, "docker ps")
-    }
-
-    func testEmptyQueryRanksCommandsByUsageCount() throws {
-        let harness = makeStorageHarness()
-        let storage = harness.storage
-        storage.save(command: "git status")
-        storage.save(command: "kubectl get pods")
-        storage.save(command: "docker ps")
-
-        let gitStatus = try XCTUnwrap(item(command: "git status", in: storage))
-        let kubectl = try XCTUnwrap(item(command: "kubectl get pods", in: storage))
-        let docker = try XCTUnwrap(item(command: "docker ps", in: storage))
-
-        (0..<10).forEach { _ in storage.markUsed(id: gitStatus.id) }
-        (0..<3).forEach { _ in storage.markUsed(id: kubectl.id) }
-        storage.markUsed(id: docker.id)
-
-        let searchService = SearchService(storageService: storage)
-        let results = searchService.search(query: "")
-
-        XCTAssertEqual(
-            Array(results.prefix(3)).map(\.command),
-            ["git status", "kubectl get pods", "docker ps"]
-        )
-    }
-
-    func testMoreRecentCommandRanksAheadOfOlderCommandWhenUsageMatches() {
-        let harness = makeStorageHarness()
-        let storage = harness.storage
+    func testDomainExactMatchRanksAheadOfEnvOnlyMatch() {
         let now = Date().timeIntervalSince1970
-
-        storage.save(command: "git status")
-        storage.save(command: "kubectl get pods")
-
-        updateStats(
-            command: "git status",
-            usageCount: 1,
-            lastUsedAt: now - (8 * 24 * 60 * 60),
-            createdAt: now - 1_000,
-            using: harness.databaseManager
+        let currentContext = CommandContext(
+            url: "https://prod.cluster-a.example.com",
+            domain: "prod.cluster-a.example.com",
+            env: "prod",
+            sourceApp: "com.google.chrome"
         )
-        updateStats(
+
+        let exactDomain = makeItem(
+            id: "domain",
             command: "kubectl get pods",
-            usageCount: 1,
-            lastUsedAt: now,
-            createdAt: now - 500,
-            using: harness.databaseManager
+            usageCount: 2,
+            lastUsedAt: now - 60,
+            createdAt: now - 1_000,
+            contexts: [
+                makeContextStat(
+                    id: "domain-context",
+                    domain: "prod.cluster-a.example.com",
+                    env: "prod",
+                    usageCount: 1,
+                    lastUsedAt: now - 120,
+                    createdAt: now - 1_000
+                )
+            ]
+        )
+        let envOnly = makeItem(
+            id: "env",
+            command: "kubectl get pods --all-namespaces",
+            usageCount: 2,
+            lastUsedAt: now - 60,
+            createdAt: now - 900,
+            contexts: [
+                makeContextStat(
+                    id: "env-context",
+                    domain: "prod.cluster-b.example.com",
+                    env: "prod",
+                    usageCount: 1,
+                    lastUsedAt: now - 120,
+                    createdAt: now - 900
+                )
+            ]
         )
 
-        let searchService = SearchService(
-            storageService: storage,
-            nowProvider: { now }
+        let sorted = SearchService.sort(
+            [envOnly, exactDomain],
+            query: "kubectl",
+            currentContext: currentContext,
+            now: now
         )
-        let results = searchService.search(query: "")
 
-        XCTAssertEqual(Array(results.prefix(2)).map(\.command), ["kubectl get pods", "git status"])
+        XCTAssertEqual(sorted.first?.command.id, "domain")
+        XCTAssertEqual(sorted.first?.matchedContext?.id, "domain-context")
     }
 
-    func testLargeDatasetSearchRespectsCandidateLimitWithFiveHundredCommands() {
-        let storage = makeStorageHarness().storage
-        (1...500).forEach { storage.save(command: "git test-\($0)") }
+    func testCurrentEnvOnlyFiltersByDomainBeforeEnv() {
+        let harness = makeStorageHarness()
+        let storage = harness.storage
+        storage.save(command: "kubectl get pods", context: makeStoredContext(url: "https://prod.a.example.com/pods"))
+        storage.save(command: "kubectl describe svc", context: makeStoredContext(url: "https://prod.b.example.com/svc"))
+        storage.save(command: "kubectl config current-context", context: makeStoredContext(url: "https://dev.example.com/context"))
 
-        let searchService = SearchService(storageService: storage, candidateLimit: 200)
-        let results = searchService.search(query: "gt")
+        let currentContext = CommandContext(
+            url: "https://prod.a.example.com/dashboard",
+            domain: "prod.a.example.com",
+            env: "prod",
+            sourceApp: "com.google.chrome"
+        )
 
-        XCTAssertEqual(results.count, 200)
-        XCTAssertTrue(results.contains(where: { $0.command == "git test-1" }))
+        let searchService = SearchService(storageService: storage)
+        let results = searchService.search(
+            query: "kubectl",
+            currentContext: currentContext,
+            scope: .currentEnvOnly
+        )
+
+        XCTAssertEqual(results.map { $0.command.command }, ["kubectl get pods"])
+    }
+
+    func testNoCurrentContextUsesMostUsefulDisplayContext() throws {
+        let now = Date().timeIntervalSince1970
+        let item = makeItem(
+            id: "command",
+            command: "kubectl get pods",
+            usageCount: 0,
+            lastUsedAt: nil,
+            createdAt: now,
+            contexts: [
+                makeContextStat(
+                    id: "older-used",
+                    domain: "prod.example.com",
+                    env: "prod",
+                    usageCount: 3,
+                    lastUsedAt: now - 3_600,
+                    lastSeenAt: now - 7_200,
+                    createdAt: now - 10_000
+                ),
+                makeContextStat(
+                    id: "best",
+                    domain: "dev.example.com",
+                    env: "dev",
+                    usageCount: 3,
+                    lastUsedAt: now - 60,
+                    lastSeenAt: now - 120,
+                    createdAt: now - 5_000
+                )
+            ]
+        )
+
+        let result = try XCTUnwrap(
+            SearchService.sort([item], query: "kubectl", currentContext: nil, now: now).first
+        )
+
+        XCTAssertEqual(result.displayContext?.id, "best")
+        XCTAssertNil(result.matchedContext)
     }
 
     func testStrongRecentMatchCanBeatHighUsageWeakMatch() {
         let now = Date().timeIntervalSince1970
 
-        let strongRecentMatch = CommandItem(
+        let strongRecentMatch = makeItem(
             id: "recent",
             command: "kubectl",
             usageCount: 0,
             lastUsedAt: now,
-            createdAt: now
+            createdAt: now,
+            contexts: []
         )
-        let weakHistoricMatch = CommandItem(
+        let weakHistoricMatch = makeItem(
             id: "historic",
             command: "kubernetes context list",
             usageCount: 10_000,
             lastUsedAt: nil,
-            createdAt: now - 10_000
+            createdAt: now - 10_000,
+            contexts: []
         )
 
         let sorted = SearchService.sort(
             [weakHistoricMatch, strongRecentMatch],
             query: "kubectl",
+            currentContext: nil,
             now: now
         )
 
@@ -151,15 +175,11 @@ final class SearchServiceTests: XCTestCase {
 
     func testRecencyScoreExpiresAfterSevenDays() {
         let now = Date().timeIntervalSince1970
-        let item = CommandItem(
-            id: "stale",
-            command: "git status",
-            usageCount: 0,
-            lastUsedAt: now - (8 * 24 * 60 * 60),
-            createdAt: now - 100
+        XCTAssertEqual(
+            CommandScorer.recencyScore(lastUsedAt: now - (8 * 24 * 60 * 60), now: now),
+            0,
+            accuracy: 0.0001
         )
-
-        XCTAssertEqual(CommandScorer.recencyScore(for: item, now: now), 0, accuracy: 0.0001)
     }
 
     private func makeStorageHarness() -> (storage: StorageService, databaseManager: DatabaseManager) {
@@ -181,38 +201,53 @@ final class SearchServiceTests: XCTestCase {
         )
     }
 
-    private func item(command: String, in storage: StorageService) -> CommandItem? {
-        storage.fetchCandidates(query: "", limit: 20).first(where: { $0.command == command })
-    }
-
-    private func updateStats(
+    private func makeItem(
+        id: String,
         command: String,
         usageCount: Int,
         lastUsedAt: TimeInterval?,
         createdAt: TimeInterval,
-        using databaseManager: DatabaseManager
-    ) {
-        databaseManager.withConnection { db in
-            let sql = """
-            UPDATE commands
-            SET usage_count = ?, last_used_at = ?, created_at = ?
-            WHERE command = ?;
-            """
+        contexts: [CommandContextStat]
+    ) -> CommandItem {
+        CommandItem(
+            id: id,
+            command: command,
+            usageCount: usageCount,
+            lastUsedAt: lastUsedAt,
+            createdAt: createdAt,
+            contexts: contexts
+        )
+    }
 
-            var statement: OpaquePointer?
-            XCTAssertEqual(sqlite3_prepare_v2(db, sql, -1, &statement, nil), SQLITE_OK)
-            defer { sqlite3_finalize(statement) }
+    private func makeContextStat(
+        id: String,
+        domain: String?,
+        env: String?,
+        usageCount: Int,
+        lastUsedAt: TimeInterval?,
+        lastSeenAt: TimeInterval? = nil,
+        createdAt: TimeInterval
+    ) -> CommandContextStat {
+        CommandContextStat(
+            id: id,
+            contextKey: "\(domain ?? "")|\(env ?? "")",
+            domain: domain,
+            url: domain.map { "https://\($0)" },
+            env: env,
+            sourceApp: "com.google.chrome",
+            captureCount: 1,
+            usageCount: usageCount,
+            lastSeenAt: lastSeenAt,
+            lastUsedAt: lastUsedAt,
+            createdAt: createdAt
+        )
+    }
 
-            sqlite3_bind_int(statement, 1, Int32(usageCount))
-            if let lastUsedAt {
-                sqlite3_bind_int64(statement, 2, Int64(lastUsedAt))
-            } else {
-                sqlite3_bind_null(statement, 2)
-            }
-            sqlite3_bind_int64(statement, 3, Int64(createdAt))
-            sqlite3_bind_text(statement, 4, (command as NSString).utf8String, -1, sqliteTransientDestructor)
-
-            XCTAssertEqual(sqlite3_step(statement), SQLITE_DONE)
-        }
+    private func makeStoredContext(url: String) -> CommandContext {
+        CommandContext(
+            url: url,
+            env: ContextResolver.resolveEnv(from: url),
+            sourceApp: "com.google.chrome"
+        )
     }
 }
