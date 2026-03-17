@@ -33,6 +33,14 @@ xcode_args=(
   CODE_SIGNING_REQUIRED=NO
   ONLY_ACTIVE_ARCH=NO
 )
+
+# If VERSION is a simple semver tag (e.g. v1.3.0), propagate it into the app's Info.plist
+# via Xcode build settings so the released app reports the correct version.
+if [[ "${VERSION}" =~ ^v?([0-9]+\.[0-9]+\.[0-9]+)$ ]]; then
+  APP_VERSION="${BASH_REMATCH[1]}"
+  xcode_args+=(MARKETING_VERSION="${APP_VERSION}" CURRENT_PROJECT_VERSION="${APP_VERSION}")
+fi
+
 if [[ -n "${ARCHS:-}" ]]; then
   xcode_args+=(ARCHS="${ARCHS}")
 fi
