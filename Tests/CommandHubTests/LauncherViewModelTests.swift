@@ -1,3 +1,4 @@
+import AppKit
 import XCTest
 @testable import CommandHub
 
@@ -138,6 +139,40 @@ final class LauncherViewModelTests: XCTestCase {
         XCTAssertEqual(viewModel.contextStatusText, "Current: iTerm2, no web context")
     }
 
+    func testActivateUsesProvidedFrontmostApplicationForContextResolution() {
+        let storage = StorageServiceSpy()
+        let clipboard = ClipboardSpy()
+        let search = SearchServiceSpy()
+        let contextResolver = ContextResolverSpy(
+            resolution: ContextResolution(
+                context: CommandContext(
+                    url: "https://prod.example.com",
+                    domain: "prod.example.com",
+                    env: "prod",
+                    sourceApp: "com.google.chrome"
+                ),
+                status: .webContext(domain: "prod.example.com", env: "prod")
+            )
+        )
+
+        let viewModel = LauncherViewModel(
+            storageService: storage,
+            searchService: search,
+            clipboardService: clipboard,
+            contextResolver: contextResolver,
+            searchExecutor: { $0() },
+            resultExecutor: { $0() }
+        )
+
+        viewModel.activate(frontmostApplication: NSRunningApplication.current)
+
+        XCTAssertEqual(
+            contextResolver.receivedFrontmostApplication?.bundleIdentifier,
+            NSRunningApplication.current.bundleIdentifier
+        )
+        XCTAssertEqual(viewModel.contextStatusText, "Current: prod.example.com (prod)")
+    }
+
     private func makeResult(
         id: String,
         command: String,
@@ -212,10 +247,20 @@ private final class ClipboardSpy: ClipboardWriting {
     }
 }
 
-private struct ContextResolverSpy: ContextResolving {
+private final class ContextResolverSpy: ContextResolving {
     let resolution: ContextResolution
+    private(set) var receivedFrontmostApplication: NSRunningApplication?
+
+    init(resolution: ContextResolution) {
+        self.resolution = resolution
+    }
 
     func resolve() -> ContextResolution {
         resolution
+    }
+
+    func resolve(frontmostApplication: NSRunningApplication?) -> ContextResolution {
+        receivedFrontmostApplication = frontmostApplication
+        return resolution
     }
 }

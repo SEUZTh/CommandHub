@@ -63,8 +63,8 @@ struct LauncherView: View {
         .onAppear {
             focusSearchField()
         }
-        .onReceive(NotificationCenter.default.publisher(for: .launcherActivated)) { _ in
-            vm.activate()
+        .onReceive(NotificationCenter.default.publisher(for: .launcherActivated)) { notification in
+            vm.activate(frontmostApplication: notification.object as? NSRunningApplication)
             focusSearchField()
         }
         .onReceive(NotificationCenter.default.publisher(for: .launcherFocusSearchRequested)) { _ in

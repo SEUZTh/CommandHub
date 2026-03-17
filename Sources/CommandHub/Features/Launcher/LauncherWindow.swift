@@ -43,10 +43,14 @@ final class LauncherWindow {
         if window?.isVisible == true {
             window?.orderOut(nil)
         } else {
+            let previousFrontmostApplication = NSWorkspace.shared.frontmostApplication
             window?.makeKeyAndOrderFront(nil)
             NSApp.activate(ignoringOtherApps: true)
             DispatchQueue.main.async {
-                NotificationCenter.default.post(name: .launcherActivated, object: nil)
+                NotificationCenter.default.post(
+                    name: .launcherActivated,
+                    object: previousFrontmostApplication
+                )
             }
         }
     }

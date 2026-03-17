@@ -3,6 +3,13 @@ import Foundation
 
 protocol ContextResolving {
     func resolve() -> ContextResolution
+    func resolve(frontmostApplication: NSRunningApplication?) -> ContextResolution
+}
+
+extension ContextResolving {
+    func resolve(frontmostApplication: NSRunningApplication?) -> ContextResolution {
+        resolve()
+    }
 }
 
 struct ContextResolution: Hashable {
@@ -95,7 +102,11 @@ final class ContextResolver: ContextResolving {
     }
 
     func resolve() -> ContextResolution {
-        let frontmostApp = workspace.frontmostApplication
+        resolve(frontmostApplication: workspace.frontmostApplication)
+    }
+
+    func resolve(frontmostApplication: NSRunningApplication?) -> ContextResolution {
+        let frontmostApp = frontmostApplication ?? workspace.frontmostApplication
         let appName = frontmostApp?.localizedName ?? "Unknown"
         let sourceApp = CommandContext.normalizeSourceAppKey(
             frontmostApp?.bundleIdentifier ?? frontmostApp?.localizedName

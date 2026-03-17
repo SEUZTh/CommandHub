@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 import SwiftUI
 
@@ -46,11 +47,11 @@ final class LauncherViewModel: ObservableObject {
         self.resultExecutor = resultExecutor
     }
 
-    func activate() {
+    func activate(frontmostApplication: NSRunningApplication? = nil) {
         query = ""
         selection = nil
         scope = .all
-        refreshContext()
+        refreshContext(frontmostApplication: frontmostApplication)
         search()
     }
 
@@ -136,8 +137,8 @@ final class LauncherViewModel: ObservableObject {
         isCurrentEnvOnlyAvailable ? scope : .all
     }
 
-    private func refreshContext() {
-        let resolution = contextResolver.resolve()
+    private func refreshContext(frontmostApplication: NSRunningApplication? = nil) {
+        let resolution = contextResolver.resolve(frontmostApplication: frontmostApplication)
         currentContext = resolution.context
         contextStatusText = resolution.statusText
         isCurrentEnvOnlyAvailable = resolution.canFilterToCurrentEnv
