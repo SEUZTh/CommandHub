@@ -6,6 +6,15 @@ final class ClipboardService {
     private var changeCount = NSPasteboard.general.changeCount
     private var timer: Timer?
 
+    func copyToClipboard(_ text: String) {
+        let pasteboard = NSPasteboard.general
+        pasteboard.clearContents()
+        pasteboard.setString(text, forType: .string)
+
+        // Keep the listener in sync so app-initiated copies are not re-imported.
+        changeCount = pasteboard.changeCount
+    }
+
     func startListening() {
         timer?.invalidate()
         timer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in

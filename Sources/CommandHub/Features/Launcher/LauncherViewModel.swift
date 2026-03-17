@@ -1,4 +1,3 @@
-import AppKit
 import Foundation
 import SwiftUI
 
@@ -33,8 +32,7 @@ final class LauncherViewModel: ObservableObject {
     }
 
     func copy(_ item: CommandItem) {
-        NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(item.command, forType: .string)
+        ClipboardService.shared.copyToClipboard(item.command)
     }
 
     func moveSelection(_ direction: MoveCommandDirection) {
