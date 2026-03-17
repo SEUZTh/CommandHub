@@ -233,6 +233,52 @@ final class LauncherViewModelTests: XCTestCase {
         XCTAssertNil(search.receivedQueries.last?.sessionBaseline)
     }
 
+    func testCopyInvalidatesInFlightSearchResults() {
+        let storage = StorageServiceSpy()
+        let clipboard = ClipboardSpy()
+        let search = SearchServiceSpy()
+        let contextResolver = ContextResolverSpy(
+            resolution: ContextResolution(
+                context: CommandContext(
+                    url: "https://dev.example.com",
+                    domain: "dev.example.com",
+                    env: "dev",
+                    sourceApp: "com.google.chrome"
+                ),
+                status: .webContext(domain: "dev.example.com", env: "dev")
+            )
+        )
+
+        let originalFirst = makeResult(id: "1", command: "git alpha")
+        let originalSecond = makeResult(id: "2", command: "git beta")
+        let reordered = [originalSecond, originalFirst]
+
+        search.handler = { _, _, _, _ in reordered }
+
+        var queuedSearchWork: [() -> Void] = []
+        let viewModel = LauncherViewModel(
+            storageService: storage,
+            searchService: search,
+            clipboardService: clipboard,
+            contextResolver: contextResolver,
+            searchExecutor: { queuedSearchWork.append($0) },
+            resultExecutor: { $0() }
+        )
+
+        viewModel.activate()
+        XCTAssertEqual(queuedSearchWork.count, 1)
+
+        viewModel.results = [originalFirst, originalSecond]
+        viewModel.selection = originalSecond.id
+
+        viewModel.copySelectedOrFirst()
+        queuedSearchWork.removeFirst()()
+
+        XCTAssertEqual(viewModel.results, [originalFirst, originalSecond])
+        XCTAssertEqual(viewModel.selection, originalSecond.id)
+        XCTAssertEqual(clipboard.copiedTexts, [originalSecond.command.command])
+    }
+
     private func makeResult(
         id: String,
         command: String,

@@ -109,6 +109,9 @@ final class LauncherViewModel: ObservableObject {
     }
 
     func select(_ item: SearchResultItem) {
+        // Invalidate any in-flight searches so they can't reapply reordered data
+        // after this copy updates usage stats.
+        searchGeneration += 1
         selection = item.id
         sessionBaseline.recordSelection(item, currentContext: currentContext)
         clipboardService.copyToClipboard(item.command.command)
