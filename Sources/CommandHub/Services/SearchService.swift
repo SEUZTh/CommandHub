@@ -178,15 +178,18 @@ enum CommandScorer {
             return 1.0
         }
 
-        if let currentEnv = currentContext.env,
-           let itemEnv = context.env,
-           currentEnv != itemEnv {
+        let currentEnvKey = CommandContext.normalizeEnvKey(currentContext.env)
+        let itemEnvKey = CommandContext.normalizeEnvKey(context.env)
+
+        if let currentEnvKey,
+           let itemEnvKey,
+           currentEnvKey != itemEnvKey {
             return 0
         }
 
-        if let currentEnv = currentContext.env,
-           let itemEnv = context.env,
-           currentEnv == itemEnv {
+        if let currentEnvKey,
+           let itemEnvKey,
+           currentEnvKey == itemEnvKey {
             return 0.5
         }
 
@@ -293,8 +296,10 @@ final class SearchService: CommandSearching {
             return result.command.contexts.contains { $0.domain == currentDomain }
         }
 
-        if let currentEnv = currentContext.env {
-            return result.command.contexts.contains { $0.env == currentEnv }
+        if let currentEnvKey = CommandContext.normalizeEnvKey(currentContext.env) {
+            return result.command.contexts.contains {
+                CommandContext.normalizeEnvKey($0.env) == currentEnvKey
+            }
         }
 
         return false

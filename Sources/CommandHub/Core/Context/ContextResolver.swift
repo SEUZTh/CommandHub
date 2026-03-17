@@ -143,8 +143,11 @@ final class ContextResolver: ContextResolving {
         }
 
         if let queryEnv = components.queryItems?.first(where: { $0.name.lowercased() == "env" })?.value,
-           let canonical = canonicalEnv(from: queryEnv) {
-            return canonical
+           let normalizedQueryEnv = CommandContext.normalizeEnv(queryEnv) {
+            if let canonical = canonicalEnv(from: normalizedQueryEnv) {
+                return canonical
+            }
+            return normalizedQueryEnv
         }
 
         let host = CommandContext.normalizeDomain(components.host)

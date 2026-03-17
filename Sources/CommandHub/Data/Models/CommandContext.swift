@@ -14,7 +14,7 @@ struct CommandContext: Hashable {
     ) {
         self.url = Self.normalizeURL(url)
         self.domain = Self.normalizeDomain(domain) ?? Self.normalizeDomain(from: url)
-        self.env = Self.normalizeValue(env)
+        self.env = Self.normalizeEnv(env)
         self.sourceApp = Self.normalizeValue(sourceApp)
     }
 
@@ -30,7 +30,7 @@ struct CommandContext: Hashable {
         let components = [
             Self.normalizeSourceAppKey(sourceApp) ?? "",
             Self.normalizeDomain(domain) ?? "",
-            Self.normalizeValue(env) ?? ""
+            Self.normalizeEnvKey(env) ?? ""
         ]
 
         guard components.contains(where: { !$0.isEmpty }) else {
@@ -56,6 +56,24 @@ struct CommandContext: Hashable {
         }
 
         return lowered
+    }
+
+    static func normalizeEnv(_ value: String?) -> String? {
+        guard let trimmed = value?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !trimmed.isEmpty else {
+            return nil
+        }
+
+        let normalizedKey = trimmed.lowercased()
+        guard normalizedKey != "nil", normalizedKey != "null" else {
+            return nil
+        }
+
+        return trimmed
+    }
+
+    static func normalizeEnvKey(_ value: String?) -> String? {
+        normalizeEnv(value)?.lowercased()
     }
 
     static func normalizeURL(_ value: String?) -> String? {

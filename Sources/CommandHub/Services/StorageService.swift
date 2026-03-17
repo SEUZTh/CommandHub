@@ -465,7 +465,7 @@ final class StorageService: CommandStoring {
         case .domain:
             filterClause = "cc.domain = ?"
         case .env:
-            filterClause = "cc.env = ?"
+            filterClause = "LOWER(cc.env) = ?"
         }
 
         let sql = """
@@ -737,7 +737,10 @@ final class StorageService: CommandStoring {
         }
 
         if let env = context?.env {
-            return .env(env)
+            guard let normalizedEnv = CommandContext.normalizeEnvKey(env) else {
+                return nil
+            }
+            return .env(normalizedEnv)
         }
 
         return nil
@@ -751,7 +754,7 @@ final class StorageService: CommandStoring {
             contextKey: contextKey,
             domain: CommandContext.normalizeDomain(context.domain) ?? CommandContext.normalizeDomain(from: context.url),
             url: CommandContext.normalizeURL(context.url),
-            env: CommandContext.normalizeValue(context.env),
+            env: CommandContext.normalizeEnv(context.env),
             sourceApp: CommandContext.normalizeSourceAppKey(context.sourceApp)
         )
     }

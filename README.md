@@ -19,6 +19,7 @@ CommandHub 是一个 macOS SwiftUI 应用，用来自动收集你复制过的命
 - 按行解析文本并提取命令
 - 支持关键字搜索历史命令
 - 支持基于当前浏览器环境的上下文排序
+- 支持优先从 URL query `env` 识别业务环境名
 - 支持 `All / Current Env Only` 搜索范围切换
 - 支持命令上下文标签展示
 - 支持键盘上下选择、回车复制、`Esc` 关闭
@@ -73,6 +74,14 @@ Bundle ID: `ttt.CommandHub`
 10. 或者直接点击列表中的某一行，也会立即复制该命令。
 11. 回到终端或其他应用粘贴使用。
 
+当前 `env` 识别规则：
+
+- 优先读取 URL query 中的 `env`
+- 若 `env` 为常见别名，如 `stg`、`prod`，会归一化为 canonical 值
+- 若 `env` 是业务自定义环境名，如 `ECE-H-126E`，会保留原值
+- `host`、`xterm_host`、`container_id`、`container_host_name` 不参与环境名识别
+- 环境匹配大小写无关，但 UI 展示保留原值
+
 ## 命令收集规则
 
 剪贴板中的文本会按行拆分。满足以下条件的行会被视为可保存命令：
@@ -114,7 +123,7 @@ npm run dev
 
 - 只做“重新复制”，不直接执行命令
 - 浏览器上下文目前只支持 `Google Chrome` 和 `Safari`
-- 上下文识别暂不支持自定义 env 规则
+- 目前只识别 query 参数名 `env`，不自动兼容 `environment` 等别名
 - 不支持 Firefox、Arc、终端 host 等更细粒度上下文
 - 设置页面目前只是占位界面
 

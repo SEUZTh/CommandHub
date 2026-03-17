@@ -105,6 +105,39 @@ final class SearchServiceTests: XCTestCase {
         XCTAssertEqual(results.map { $0.command.command }, ["kubectl get pods"])
     }
 
+    func testCurrentEnvOnlyMatchesCustomEnvironmentCaseInsensitively() {
+        let harness = makeStorageHarness()
+        let storage = harness.storage
+        storage.save(
+            command: "kubectl get pods",
+            context: CommandContext(
+                env: "ECE-H-126E",
+                sourceApp: "com.google.chrome"
+            )
+        )
+        storage.save(
+            command: "kubectl describe pod",
+            context: CommandContext(
+                env: "ECE-H-999Z",
+                sourceApp: "com.google.chrome"
+            )
+        )
+
+        let currentContext = CommandContext(
+            env: "ece-h-126e",
+            sourceApp: "com.google.chrome"
+        )
+
+        let searchService = SearchService(storageService: storage)
+        let results = searchService.search(
+            query: "kubectl",
+            currentContext: currentContext,
+            scope: .currentEnvOnly
+        )
+
+        XCTAssertEqual(results.map { $0.command.command }, ["kubectl get pods"])
+    }
+
     func testNoCurrentContextUsesMostUsefulDisplayContext() throws {
         let now = Date().timeIntervalSince1970
         let item = makeItem(
