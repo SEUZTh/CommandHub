@@ -8,6 +8,7 @@ Packages/
 
 # Xcode build output
 DerivedData/
+build/
 
 # Xcode user-specific files
 xcuserdata/
