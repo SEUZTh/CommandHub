@@ -20,3 +20,5 @@ xcuserdata/
 *.swp
 *.swo
 *.orig
+
+.qoder/

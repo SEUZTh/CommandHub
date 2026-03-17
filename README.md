@@ -102,6 +102,11 @@ npm run dev
 - 上下文信息目前是占位值，尚未解析真实环境或页面信息
 - 设置页面目前只是占位界面
 
+## 计划文档
+
+- 当前计划入口：[PLAN.md](/Users/zth/MyProjects/CommandHub/PLAN.md)
+- 版本计划目录：[docs/plans/README.md](/Users/zth/MyProjects/CommandHub/docs/plans/README.md)
+
 ## 项目结构
 
 ```text
@@ -128,4 +133,3 @@ Sources/CommandHub/
 - 上下文感知过滤
 - 多设备同步
 - 历史清理和导出
-

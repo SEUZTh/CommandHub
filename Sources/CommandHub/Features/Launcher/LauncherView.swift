@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 struct LauncherView: View {
@@ -27,14 +28,24 @@ struct LauncherView: View {
         }
         .frame(width: 500, height: 400)
         .onAppear {
-            isSearchFocused = true
+            focusSearchField()
             vm.selection = vm.filteredCommands.first?.id
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .launcherFocusSearchRequested)) { _ in
+            focusSearchField()
         }
         .onMoveCommand { direction in
             vm.moveSelection(direction)
         }
         .onExitCommand {
             LauncherWindow.shared.close()
+        }
+    }
+
+    private func focusSearchField() {
+        isSearchFocused = true
+        DispatchQueue.main.async {
+            NSApp.sendAction(#selector(NSText.selectAll(_:)), to: nil, from: nil)
         }
     }
 }

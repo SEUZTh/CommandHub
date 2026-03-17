@@ -1,6 +1,24 @@
 import AppKit
 import SwiftUI
 
+extension Notification.Name {
+    static let launcherFocusSearchRequested = Notification.Name("launcherFocusSearchRequested")
+}
+
+private final class LauncherSearchWindow: NSWindow {
+    override func performKeyEquivalent(with event: NSEvent) -> Bool {
+        let modifiers = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+        if event.type == .keyDown,
+           modifiers == [.command],
+           event.charactersIgnoringModifiers?.lowercased() == "f" {
+            NotificationCenter.default.post(name: .launcherFocusSearchRequested, object: nil)
+            return true
+        }
+
+        return super.performKeyEquivalent(with: event)
+    }
+}
+
 final class LauncherWindow {
     static let shared = LauncherWindow()
 
@@ -9,7 +27,7 @@ final class LauncherWindow {
     func toggle() {
         if window == nil {
             let view = LauncherView()
-            let window = NSWindow(
+            let window = LauncherSearchWindow(
                 contentRect: NSRect(x: 0, y: 0, width: 500, height: 400),
                 styleMask: [.titled, .closable],
                 backing: .buffered,
