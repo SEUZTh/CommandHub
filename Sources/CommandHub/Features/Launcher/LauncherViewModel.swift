@@ -26,6 +26,7 @@ final class LauncherViewModel: ObservableObject {
 
     private var searchGeneration = 0
     private var currentContext: CommandContext?
+    private var sessionBaseline = SearchSessionBaseline()
 
     init(
         storageService: CommandStoring = StorageService.shared,
@@ -51,6 +52,7 @@ final class LauncherViewModel: ObservableObject {
         query = ""
         selection = nil
         scope = .all
+        sessionBaseline = SearchSessionBaseline()
         refreshContext(frontmostApplication: frontmostApplication)
         search()
     }
@@ -67,6 +69,7 @@ final class LauncherViewModel: ObservableObject {
         let currentQuery = query
         let currentScope = effectiveSearchScope
         let context = currentContext
+        let sessionBaseline = self.sessionBaseline.isEmpty ? nil : self.sessionBaseline
 
         searchGeneration += 1
         let generation = searchGeneration
@@ -77,7 +80,8 @@ final class LauncherViewModel: ObservableObject {
             let items = self.searchService.search(
                 query: currentQuery,
                 currentContext: context,
-                scope: currentScope
+                scope: currentScope,
+                sessionBaseline: sessionBaseline
             )
 
             self.resultExecutor { [weak self] in
@@ -106,13 +110,13 @@ final class LauncherViewModel: ObservableObject {
 
     func select(_ item: SearchResultItem) {
         selection = item.id
+        sessionBaseline.recordSelection(item, currentContext: currentContext)
         clipboardService.copyToClipboard(item.command.command)
         storageService.markUsed(
             commandID: item.command.id,
             matchedContextID: item.matchedContext?.id,
             fallbackContext: currentContext
         )
-        search()
     }
 
     func moveSelection(_ direction: MoveCommandDirection) {

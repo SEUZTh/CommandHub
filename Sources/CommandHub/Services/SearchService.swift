@@ -1,12 +1,132 @@
 import Foundation
 
 protocol CommandSearching {
-    func search(query: String, currentContext: CommandContext?, scope: SearchScope) -> [SearchResultItem]
+    func search(
+        query: String,
+        currentContext: CommandContext?,
+        scope: SearchScope,
+        sessionBaseline: SearchSessionBaseline?
+    ) -> [SearchResultItem]
 }
 
 extension CommandSearching {
+    func search(
+        query: String,
+        currentContext: CommandContext?,
+        scope: SearchScope
+    ) -> [SearchResultItem] {
+        search(
+            query: query,
+            currentContext: currentContext,
+            scope: scope,
+            sessionBaseline: nil
+        )
+    }
+
     func search(query: String) -> [SearchResultItem] {
-        search(query: query, currentContext: nil, scope: .all)
+        search(
+            query: query,
+            currentContext: nil,
+            scope: .all,
+            sessionBaseline: nil
+        )
+    }
+}
+
+struct SearchSessionBaseline: Equatable {
+    struct UsageSnapshot: Equatable {
+        let usageCount: Int
+        let lastUsedAt: TimeInterval?
+    }
+
+    struct ContextKey: Hashable {
+        let commandID: String
+        let contextKey: String
+    }
+
+    enum ContextSnapshot: Equatable {
+        case missing
+        case existing(UsageSnapshot)
+    }
+
+    private(set) var commandSnapshots: [String: UsageSnapshot] = [:]
+    private(set) var contextSnapshots: [ContextKey: ContextSnapshot] = [:]
+
+    var isEmpty: Bool {
+        commandSnapshots.isEmpty && contextSnapshots.isEmpty
+    }
+
+    var touchedCommandCount: Int {
+        commandSnapshots.count
+    }
+
+    mutating func recordSelection(_ item: SearchResultItem, currentContext: CommandContext?) {
+        if commandSnapshots[item.command.id] == nil {
+            commandSnapshots[item.command.id] = UsageSnapshot(
+                usageCount: item.command.usageCount,
+                lastUsedAt: item.command.lastUsedAt
+            )
+        }
+
+        guard let contextKey = currentContext?.contextKey else { return }
+
+        let compositeKey = ContextKey(
+            commandID: item.command.id,
+            contextKey: contextKey
+        )
+        guard contextSnapshots[compositeKey] == nil else { return }
+
+        if let existingContext = item.command.contexts.first(where: { $0.contextKey == contextKey }) {
+            contextSnapshots[compositeKey] = .existing(
+                UsageSnapshot(
+                    usageCount: existingContext.usageCount,
+                    lastUsedAt: existingContext.lastUsedAt
+                )
+            )
+        } else {
+            contextSnapshots[compositeKey] = .missing
+        }
+    }
+
+    func apply(to item: CommandItem) -> CommandItem {
+        let adjustedContexts = item.contexts.compactMap { context -> CommandContextStat? in
+            let compositeKey = ContextKey(
+                commandID: item.id,
+                contextKey: context.contextKey
+            )
+
+            switch contextSnapshots[compositeKey] {
+            case let .existing(snapshot):
+                return CommandContextStat(
+                    id: context.id,
+                    contextKey: context.contextKey,
+                    domain: context.domain,
+                    url: context.url,
+                    env: context.env,
+                    sourceApp: context.sourceApp,
+                    captureCount: context.captureCount,
+                    usageCount: snapshot.usageCount,
+                    lastSeenAt: context.lastSeenAt,
+                    lastUsedAt: snapshot.lastUsedAt,
+                    createdAt: context.createdAt
+                )
+            case .missing:
+                return nil
+            case .none:
+                return context
+            }
+        }
+
+        let commandSnapshot = commandSnapshots[item.id]
+
+        return CommandItem(
+            id: item.id,
+            command: item.command,
+            usageCount: commandSnapshot?.usageCount ?? item.usageCount,
+            lastUsedAt: commandSnapshot?.lastUsedAt ?? item.lastUsedAt,
+            createdAt: item.createdAt,
+            contexts: adjustedContexts
+        )
     }
 }
 
@@ -233,40 +353,55 @@ final class SearchService: CommandSearching {
     func search(
         query: String,
         currentContext: CommandContext?,
-        scope: SearchScope
+        scope: SearchScope,
+        sessionBaseline: SearchSessionBaseline? = nil
     ) -> [SearchResultItem] {
         let normalizedQuery = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        let activeBaseline = sessionBaseline?.isEmpty == false ? sessionBaseline : nil
+        let effectiveLimit = candidateLimit + (activeBaseline?.touchedCommandCount ?? 0)
         let items = storageService.fetchCandidates(
             query: normalizedQuery,
             currentContext: currentContext,
             scope: scope,
-            limit: candidateLimit
+            limit: effectiveLimit
         )
 
         let results = Self.sort(
             items,
             query: normalizedQuery,
             currentContext: currentContext,
-            now: nowProvider()
+            now: nowProvider(),
+            sessionBaseline: activeBaseline
         )
 
         guard scope == .currentEnvOnly else {
-            return results
+            return Array(results.prefix(candidateLimit))
         }
 
-        return results.filter {
-            Self.matchesCurrentEnvScope(result: $0, currentContext: currentContext)
-        }
+        return Array(
+            results
+                .filter { Self.matchesCurrentEnvScope(result: $0, currentContext: currentContext) }
+                .prefix(candidateLimit)
+        )
     }
 
     static func sort(
         _ items: [CommandItem],
         query: String,
         currentContext: CommandContext?,
-        now: TimeInterval = Date().timeIntervalSince1970
+        now: TimeInterval = Date().timeIntervalSince1970,
+        sessionBaseline: SearchSessionBaseline? = nil
     ) -> [SearchResultItem] {
         items
-            .compactMap { CommandScorer.score(item: $0, query: query, currentContext: currentContext, now: now) }
+            .compactMap { item in
+                let adjustedItem = sessionBaseline?.apply(to: item) ?? item
+                return CommandScorer.score(
+                    item: adjustedItem,
+                    query: query,
+                    currentContext: currentContext,
+                    now: now
+                )
+            }
             .sorted { lhs, rhs in
                 if lhs.score != rhs.score {
                     return lhs.score > rhs.score

@@ -215,6 +215,106 @@ final class SearchServiceTests: XCTestCase {
         )
     }
 
+    func testSessionBaselineKeepsCopiedCommandFromJumpingAheadUntilNextSession() throws {
+        let storage = makeStorageHarness().storage
+        storage.save(command: "git alpha")
+        storage.save(command: "git beta")
+
+        let initialItems = storage.fetchCandidates(query: "git", limit: 2)
+        let alpha = try XCTUnwrap(initialItems.first(where: { $0.command == "git alpha" }))
+        let beta = try XCTUnwrap(initialItems.first(where: { $0.command == "git beta" }))
+
+        storage.markUsed(id: alpha.id)
+        storage.markUsed(id: alpha.id)
+
+        var baseline = SearchSessionBaseline()
+        baseline.recordSelection(makeResultItem(command: beta), currentContext: nil)
+
+        storage.markUsed(id: beta.id)
+        storage.markUsed(id: beta.id)
+        storage.markUsed(id: beta.id)
+
+        let searchService = SearchService(storageService: storage, candidateLimit: 1)
+
+        let sameSession = searchService.search(
+            query: "git",
+            currentContext: nil,
+            scope: .all,
+            sessionBaseline: baseline
+        )
+        let nextSession = searchService.search(
+            query: "git",
+            currentContext: nil,
+            scope: .all,
+            sessionBaseline: nil
+        )
+
+        XCTAssertEqual(sameSession.map { $0.command.command }, ["git alpha"])
+        XCTAssertEqual(nextSession.map { $0.command.command }, ["git beta"])
+    }
+
+    func testSessionBaselineHidesContextCreatedByCurrentSessionCopy() throws {
+        let storage = makeStorageHarness().storage
+        let currentContext = CommandContext(
+            url: "https://prod.example.com/dashboard",
+            domain: "prod.example.com",
+            env: "prod",
+            sourceApp: "com.google.chrome"
+        )
+        let otherContext = CommandContext(
+            url: "https://dev.example.com/dashboard",
+            domain: "dev.example.com",
+            env: "dev",
+            sourceApp: "com.google.chrome"
+        )
+
+        storage.save(command: "kubectl get pods", context: currentContext)
+        storage.save(command: "kubectl describe svc", context: otherContext)
+
+        let initialItems = storage.fetchCandidates(
+            query: "kubectl",
+            currentContext: currentContext,
+            scope: .all,
+            limit: 2
+        )
+        let prodItem = try XCTUnwrap(initialItems.first(where: { $0.command == "kubectl get pods" }))
+        let copiedItem = try XCTUnwrap(initialItems.first(where: { $0.command == "kubectl describe svc" }))
+
+        storage.markUsed(id: prodItem.id)
+
+        var baseline = SearchSessionBaseline()
+        baseline.recordSelection(makeResultItem(command: copiedItem), currentContext: currentContext)
+
+        storage.markUsed(
+            commandID: copiedItem.id,
+            matchedContextID: nil,
+            fallbackContext: currentContext
+        )
+        storage.markUsed(
+            commandID: copiedItem.id,
+            matchedContextID: nil,
+            fallbackContext: currentContext
+        )
+
+        let searchService = SearchService(storageService: storage, candidateLimit: 1)
+
+        let sameSession = searchService.search(
+            query: "kubectl",
+            currentContext: currentContext,
+            scope: .currentEnvOnly,
+            sessionBaseline: baseline
+        )
+        let nextSession = searchService.search(
+            query: "kubectl",
+            currentContext: currentContext,
+            scope: .currentEnvOnly,
+            sessionBaseline: nil
+        )
+
+        XCTAssertEqual(sameSession.map { $0.command.command }, ["kubectl get pods"])
+        XCTAssertEqual(nextSession.map { $0.command.command }, ["kubectl describe svc"])
+    }
+
     private func makeStorageHarness() -> (storage: StorageService, databaseManager: DatabaseManager) {
         let databaseURL = FileManager.default.temporaryDirectory
             .appendingPathComponent(UUID().uuidString, isDirectory: true)
@@ -281,6 +381,15 @@ final class SearchServiceTests: XCTestCase {
             url: url,
             env: ContextResolver.resolveEnv(from: url),
             sourceApp: "com.google.chrome"
+        )
+    }
+
+    private func makeResultItem(command: CommandItem) -> SearchResultItem {
+        SearchResultItem(
+            command: command,
+            matchedContext: nil,
+            displayContext: nil,
+            score: 0
         )
     }
 }

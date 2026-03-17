@@ -23,10 +23,11 @@ final class LauncherViewModelTests: XCTestCase {
             makeResult(id: "1", command: "git status"),
             makeResult(id: "2", command: "git checkout")
         ]
-        search.handler = { query, currentContext, scope in
+        search.handler = { query, currentContext, scope, sessionBaseline in
             XCTAssertEqual(query, "")
             XCTAssertEqual(currentContext?.domain, "prod.example.com")
             XCTAssertEqual(scope, .all)
+            XCTAssertNil(sessionBaseline)
             return expectedItems
         }
 
@@ -51,7 +52,7 @@ final class LauncherViewModelTests: XCTestCase {
         XCTAssertTrue(viewModel.isCurrentEnvOnlyAvailable)
     }
 
-    func testCopySelectedOrFirstCopiesMarksMatchedContextAndRefreshesResults() {
+    func testCopySelectedOrFirstCopiesMarksMatchedContextWithoutRefreshingResults() {
         let storage = StorageServiceSpy()
         let clipboard = ClipboardSpy()
         let search = SearchServiceSpy()
@@ -86,7 +87,7 @@ final class LauncherViewModelTests: XCTestCase {
             )
         )
 
-        search.handler = { _, _, _ in [item] }
+        search.handler = { _, _, _, _ in [item] }
 
         let viewModel = LauncherViewModel(
             storageService: storage,
@@ -100,6 +101,7 @@ final class LauncherViewModelTests: XCTestCase {
         viewModel.query = "git"
         viewModel.results = [item]
         viewModel.selection = item.id
+        let searchCountBeforeCopy = search.receivedQueries.count
 
         viewModel.copySelectedOrFirst()
 
@@ -108,7 +110,7 @@ final class LauncherViewModelTests: XCTestCase {
         XCTAssertEqual(storage.markUsedCalls.first?.commandID, item.command.id)
         XCTAssertEqual(storage.markUsedCalls.first?.matchedContextID, "matched-context")
         XCTAssertEqual(storage.markUsedCalls.first?.fallbackContext, currentContext)
-        XCTAssertEqual(search.receivedQueries.suffix(1).first?.query, "git")
+        XCTAssertEqual(search.receivedQueries.count, searchCountBeforeCopy)
     }
 
     func testSetScopeFallsBackToAllWhenCurrentEnvOnlyIsUnavailable() {
@@ -173,6 +175,64 @@ final class LauncherViewModelTests: XCTestCase {
         XCTAssertEqual(viewModel.contextStatusText, "Current: prod.example.com (prod)")
     }
 
+    func testSearchUsesSessionBaselineUntilNextActivate() {
+        let storage = StorageServiceSpy()
+        let clipboard = ClipboardSpy()
+        let search = SearchServiceSpy()
+        let currentContext = CommandContext(
+            url: "https://dev.example.com",
+            domain: "dev.example.com",
+            env: "dev",
+            sourceApp: "com.google.chrome"
+        )
+        let contextResolver = ContextResolverSpy(
+            resolution: ContextResolution(
+                context: currentContext,
+                status: .webContext(domain: "dev.example.com", env: "dev")
+            )
+        )
+
+        let item = makeResult(
+            id: "selected",
+            command: "git status",
+            matchedContext: CommandContextStat(
+                id: "matched-context",
+                contextKey: "com.google.chrome|dev.example.com|dev",
+                domain: "dev.example.com",
+                url: "https://dev.example.com",
+                env: "dev",
+                sourceApp: "com.google.chrome",
+                captureCount: 1,
+                usageCount: 1,
+                lastSeenAt: 10,
+                lastUsedAt: 10,
+                createdAt: 1
+            )
+        )
+
+        search.handler = { _, _, _, _ in [item] }
+
+        let viewModel = LauncherViewModel(
+            storageService: storage,
+            searchService: search,
+            clipboardService: clipboard,
+            contextResolver: contextResolver,
+            searchExecutor: { $0() },
+            resultExecutor: { $0() }
+        )
+
+        viewModel.activate()
+        viewModel.results = [item]
+        viewModel.copySelectedOrFirst()
+        viewModel.search()
+
+        XCTAssertEqual(search.receivedQueries.last?.sessionBaseline?.touchedCommandCount, 1)
+
+        viewModel.activate()
+
+        XCTAssertNil(search.receivedQueries.last?.sessionBaseline)
+    }
+
     private func makeResult(
         id: String,
         command: String,
@@ -230,12 +290,24 @@ private final class StorageServiceSpy: CommandStoring {
 }
 
 private final class SearchServiceSpy: CommandSearching {
-    var handler: (String, CommandContext?, SearchScope) -> [SearchResultItem] = { _, _, _ in [] }
-    private(set) var receivedQueries: [(query: String, context: CommandContext?, scope: SearchScope)] = []
+    var handler: (String, CommandContext?, SearchScope, SearchSessionBaseline?) -> [SearchResultItem] = {
+        _, _, _, _ in []
+    }
+    private(set) var receivedQueries: [(
+        query: String,
+        context: CommandContext?,
+        scope: SearchScope,
+        sessionBaseline: SearchSessionBaseline?
+    )] = []
 
-    func search(query: String, currentContext: CommandContext?, scope: SearchScope) -> [SearchResultItem] {
-        receivedQueries.append((query, currentContext, scope))
-        return handler(query, currentContext, scope)
+    func search(
+        query: String,
+        currentContext: CommandContext?,
+        scope: SearchScope,
+        sessionBaseline: SearchSessionBaseline?
+    ) -> [SearchResultItem] {
+        receivedQueries.append((query, currentContext, scope, sessionBaseline))
+        return handler(query, currentContext, scope, sessionBaseline)
     }
 }
 
