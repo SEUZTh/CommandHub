@@ -4,6 +4,7 @@
 
 ## 版本列表
 
+- `V1.2`：[v1.2.md](/Users/zth/MyProjects/CommandHub/docs/plans/v1.2.md)
 - `V1.1`：[v1.1.md](/Users/zth/MyProjects/CommandHub/docs/plans/v1.1.md)
 
 ## 维护规则

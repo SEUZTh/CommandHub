@@ -1,6 +1,10 @@
 import AppKit
 
-final class ClipboardService {
+protocol ClipboardWriting {
+    func copyToClipboard(_ text: String)
+}
+
+final class ClipboardService: ClipboardWriting {
     static let shared = ClipboardService()
 
     private var changeCount = NSPasteboard.general.changeCount

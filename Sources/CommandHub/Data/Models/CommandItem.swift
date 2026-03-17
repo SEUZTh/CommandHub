@@ -1,8 +1,9 @@
 import Foundation
 
 struct CommandItem: Identifiable, Hashable {
-    let id: UUID
+    let id: String
     let command: String
-    let context: CommandContext
-    let createdAt: Date
+    let usageCount: Int
+    let lastUsedAt: TimeInterval?
+    let createdAt: TimeInterval
 }

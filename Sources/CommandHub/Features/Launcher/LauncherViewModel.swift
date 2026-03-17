@@ -2,63 +2,112 @@ import Foundation
 import SwiftUI
 
 final class LauncherViewModel: ObservableObject {
-    @Published var query = "" {
-        didSet { updateSelectionIfNeeded() }
-    }
-    @Published var selection: UUID?
+    typealias Executor = (@escaping () -> Void) -> Void
 
-    var commands: [CommandItem] {
-        StorageService.shared.commands
+    @Published var query = ""
+    @Published var results: [CommandItem] = []
+    @Published var selection: String?
+
+    private static let defaultSearchQueue = DispatchQueue(
+        label: "commandhub.launcher.search",
+        qos: .userInitiated
+    )
+
+    private let storageService: CommandStoring
+    private let searchService: CommandSearching
+    private let clipboardService: ClipboardWriting
+    private let searchExecutor: Executor
+    private let resultExecutor: Executor
+
+    private var searchGeneration = 0
+
+    init(
+        storageService: CommandStoring = StorageService.shared,
+        searchService: CommandSearching = SearchService.shared,
+        clipboardService: ClipboardWriting = ClipboardService.shared,
+        searchExecutor: @escaping Executor = { work in
+            defaultSearchQueue.async(execute: work)
+        },
+        resultExecutor: @escaping Executor = { work in
+            DispatchQueue.main.async(execute: work)
+        }
+    ) {
+        self.storageService = storageService
+        self.searchService = searchService
+        self.clipboardService = clipboardService
+        self.searchExecutor = searchExecutor
+        self.resultExecutor = resultExecutor
     }
 
-    var filteredCommands: [CommandItem] {
-        if query.isEmpty { return commands }
-        return commands.filter { $0.command.localizedCaseInsensitiveContains(query) }
+    func activate() {
+        query = ""
+        selection = nil
+        search()
+    }
+
+    func search() {
+        let currentQuery = query
+        searchGeneration += 1
+        let generation = searchGeneration
+
+        searchExecutor { [weak self] in
+            guard let self else { return }
+
+            let items = self.searchService.search(query: currentQuery)
+
+            self.resultExecutor { [weak self] in
+                guard let self else { return }
+                guard generation == self.searchGeneration, currentQuery == self.query else { return }
+
+                self.results = items
+                self.updateSelectionIfNeeded()
+            }
+        }
     }
 
     func copySelectedOrFirst() {
-        let items = filteredCommands
-        if items.isEmpty { return }
+        guard !results.isEmpty else { return }
 
         let item: CommandItem
-        if let selection, let match = items.first(where: { $0.id == selection }) {
+        if let selection, let match = results.first(where: { $0.id == selection }) {
             item = match
         } else {
-            item = items[0]
+            item = results[0]
             self.selection = item.id
         }
 
-        copy(item)
+        select(item)
     }
 
-    func copy(_ item: CommandItem) {
-        ClipboardService.shared.copyToClipboard(item.command)
+    func select(_ item: CommandItem) {
+        selection = item.id
+        clipboardService.copyToClipboard(item.command)
+        storageService.markUsed(id: item.id)
+        search()
     }
 
     func moveSelection(_ direction: MoveCommandDirection) {
-        let items = filteredCommands
-        guard !items.isEmpty else { return }
+        guard !results.isEmpty else { return }
 
-        let currentIndex = items.firstIndex { $0.id == selection } ?? 0
+        let currentIndex = results.firstIndex { $0.id == selection } ?? 0
         let nextIndex: Int
 
         switch direction {
         case .up:
             nextIndex = max(currentIndex - 1, 0)
         case .down:
-            nextIndex = min(currentIndex + 1, items.count - 1)
+            nextIndex = min(currentIndex + 1, results.count - 1)
         default:
             return
         }
 
-        selection = items[nextIndex].id
+        selection = results[nextIndex].id
     }
 
     private func updateSelectionIfNeeded() {
-        let items = filteredCommands
-        if let selection, items.contains(where: { $0.id == selection }) {
+        if let selection, results.contains(where: { $0.id == selection }) {
             return
         }
-        selection = items.first?.id
+        selection = results.first?.id
     }
 }

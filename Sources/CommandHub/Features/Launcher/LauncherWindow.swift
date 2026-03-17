@@ -2,6 +2,7 @@ import AppKit
 import SwiftUI
 
 extension Notification.Name {
+    static let launcherActivated = Notification.Name("launcherActivated")
     static let launcherFocusSearchRequested = Notification.Name("launcherFocusSearchRequested")
 }
 
@@ -44,6 +45,9 @@ final class LauncherWindow {
         } else {
             window?.makeKeyAndOrderFront(nil)
             NSApp.activate(ignoringOtherApps: true)
+            DispatchQueue.main.async {
+                NotificationCenter.default.post(name: .launcherActivated, object: nil)
+            }
         }
     }
 

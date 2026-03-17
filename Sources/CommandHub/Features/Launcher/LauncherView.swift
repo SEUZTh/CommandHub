@@ -14,14 +14,16 @@ struct LauncherView: View {
                 .onSubmit {
                     vm.copySelectedOrFirst()
                 }
+                .onChange(of: vm.query) { _ in
+                    vm.search()
+                }
 
             List(selection: $vm.selection) {
-                ForEach(vm.filteredCommands) { item in
+                ForEach(vm.results) { item in
                     Text(item.command)
                         .tag(item.id)
                         .onTapGesture {
-                            vm.selection = item.id
-                            vm.copy(item)
+                            vm.select(item)
                         }
                 }
             }
@@ -29,7 +31,10 @@ struct LauncherView: View {
         .frame(width: 500, height: 400)
         .onAppear {
             focusSearchField()
-            vm.selection = vm.filteredCommands.first?.id
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .launcherActivated)) { _ in
+            vm.activate()
+            focusSearchField()
         }
         .onReceive(NotificationCenter.default.publisher(for: .launcherFocusSearchRequested)) { _ in
             focusSearchField()

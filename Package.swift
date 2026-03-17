@@ -18,6 +18,12 @@ let package = Package(
             dependencies: [
                 .product(name: "HotKey", package: "HotKey")
             ]
+        ),
+        .testTarget(
+            name: "CommandHubTests",
+            dependencies: [
+                "CommandHub"
+            ]
         )
     ]
 )

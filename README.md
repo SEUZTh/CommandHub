@@ -106,6 +106,7 @@ npm run dev
 
 - 当前计划入口：[PLAN.md](/Users/zth/MyProjects/CommandHub/PLAN.md)
 - 版本计划目录：[docs/plans/README.md](/Users/zth/MyProjects/CommandHub/docs/plans/README.md)
+- 测试用例文档：[docs/testing/v1.2-test-cases.md](/Users/zth/MyProjects/CommandHub/docs/testing/v1.2-test-cases.md)
 
 ## 项目结构
 
