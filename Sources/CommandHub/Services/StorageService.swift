@@ -1,26 +1,83 @@
 import Foundation
 import SQLite3
 
+extension Notification.Name {
+    static let workspacesDidChange = Notification.Name("commandHub.workspacesDidChange")
+}
+
+enum WorkspaceStoreError: Error, Equatable {
+    case emptyName
+    case duplicateName
+}
+
 protocol CommandStoring {
     func save(command: String, context: CommandContext?)
     func fetchCandidates(
         query: String,
         currentContext: CommandContext?,
         scope: SearchScope,
+        filters: SearchFilters,
         limit: Int
     ) -> [CommandItem]
     func markUsed(commandID: String, matchedContextID: String?, fallbackContext: CommandContext?)
+    func toggleFavorite(commandID: String)
+    func updateAlias(commandID: String, alias: String?)
+    func updateNote(commandID: String, note: String?)
+    func assignWorkspace(commandID: String, workspaceID: String?)
+    func fetchWorkspaces() -> [CommandWorkspace]
+    func createWorkspace(name: String) throws -> CommandWorkspace
+    func renameWorkspace(id: String, name: String) throws
+    func deleteWorkspace(id: String)
     func delete(id: String)
 }
 
 extension CommandStoring {
+    func fetchCandidates(
+        query: String,
+        currentContext: CommandContext?,
+        scope: SearchScope,
+        limit: Int
+    ) -> [CommandItem] {
+        fetchCandidates(
+            query: query,
+            currentContext: currentContext,
+            scope: scope,
+            filters: .default,
+            limit: limit
+        )
+    }
+
     func fetchCandidates(query: String, limit: Int = 200) -> [CommandItem] {
-        fetchCandidates(query: query, currentContext: nil, scope: .all, limit: limit)
+        fetchCandidates(
+            query: query,
+            currentContext: nil,
+            scope: .all,
+            filters: .default,
+            limit: limit
+        )
     }
 
     func markUsed(id: String) {
         markUsed(commandID: id, matchedContextID: nil, fallbackContext: nil)
     }
+
+    func toggleFavorite(commandID: String) {}
+
+    func updateAlias(commandID: String, alias: String?) {}
+
+    func updateNote(commandID: String, note: String?) {}
+
+    func assignWorkspace(commandID: String, workspaceID: String?) {}
+
+    func fetchWorkspaces() -> [CommandWorkspace] { [] }
+
+    func createWorkspace(name: String) throws -> CommandWorkspace {
+        throw WorkspaceStoreError.emptyName
+    }
+
+    func renameWorkspace(id: String, name: String) throws {}
+
+    func deleteWorkspace(id: String) {}
 }
 
 final class StorageService: CommandStoring {
@@ -48,10 +105,16 @@ final class StorageService: CommandStoring {
     func save(command: String, context: CommandContext? = nil) {
         let normalizedCommand = command.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !normalizedCommand.isEmpty else { return }
+        let category = CommandCategoryResolver.resolveCategory(for: normalizedCommand)
 
         databaseManager.withConnection { db in
             let now = Int64(Date().timeIntervalSince1970)
-            let commandID = fetchOrInsertCommandID(command: normalizedCommand, now: now, in: db)
+            let commandID = fetchOrInsertCommandID(
+                command: normalizedCommand,
+                category: category,
+                now: now,
+                in: db
+            )
 
             guard let persistedContext = persistedContext(from: context) else { return }
             upsertCapturedContext(
@@ -67,6 +130,7 @@ final class StorageService: CommandStoring {
         query: String,
         currentContext: CommandContext?,
         scope: SearchScope,
+        filters: SearchFilters,
         limit: Int = 200
     ) -> [CommandItem] {
         let normalizedQuery = query.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -82,11 +146,13 @@ final class StorageService: CommandStoring {
                     let contextIDs = fetchContextCandidateIDs(
                         query: normalizedQuery,
                         filter: filter,
+                        filters: filters,
                         limit: min(100, candidateLimit),
                         in: db
                     )
                     let globalIDs = fetchGlobalCandidateIDs(
                         query: normalizedQuery,
+                        filters: filters,
                         limit: candidateLimit,
                         in: db
                     )
@@ -98,6 +164,7 @@ final class StorageService: CommandStoring {
                 } else {
                     ids = fetchGlobalCandidateIDs(
                         query: normalizedQuery,
+                        filters: filters,
                         limit: candidateLimit,
                         in: db
                     )
@@ -107,11 +174,13 @@ final class StorageService: CommandStoring {
                 let contextIDs = fetchContextCandidateIDs(
                     query: normalizedQuery,
                     filter: filter,
+                    filters: filters,
                     limit: candidateLimit,
                     in: db
                 )
                 let globalIDs = fetchGlobalCandidateIDs(
                     query: normalizedQuery,
+                    filters: filters,
                     limit: candidateLimit,
                     in: db
                 )
@@ -158,17 +227,195 @@ final class StorageService: CommandStoring {
                 in: db
             )
         }
+
+        postWorkspaceChangeNotification()
     }
 
-    private func fetchOrInsertCommandID(command: String, now: Int64, in db: OpaquePointer) -> String {
+    func toggleFavorite(commandID: String) {
+        databaseManager.withConnection { db in
+            let sql = """
+            UPDATE commands
+            SET is_favorite = CASE is_favorite WHEN 1 THEN 0 ELSE 1 END
+            WHERE id = ?;
+            """
+
+            guard let statement = prepareStatement(sql, in: db) else { return }
+            defer { sqlite3_finalize(statement) }
+
+            bindText(commandID, to: statement, at: 1)
+            guard sqlite3_step(statement) == SQLITE_DONE else {
+                assertionFailure("Failed to toggle favorite: \(String(cString: sqlite3_errmsg(db)))")
+                return
+            }
+        }
+    }
+
+    func updateAlias(commandID: String, alias: String?) {
+        updateMetadataColumn("alias", value: normalizeOptionalText(alias), commandID: commandID)
+    }
+
+    func updateNote(commandID: String, note: String?) {
+        updateMetadataColumn("note", value: normalizeOptionalText(note), commandID: commandID)
+    }
+
+    func assignWorkspace(commandID: String, workspaceID: String?) {
+        databaseManager.withConnection { db in
+            let sql = "UPDATE commands SET workspace_id = ? WHERE id = ?;"
+            guard let statement = prepareStatement(sql, in: db) else { return }
+            defer { sqlite3_finalize(statement) }
+
+            bindOptionalText(workspaceID, to: statement, at: 1)
+            bindText(commandID, to: statement, at: 2)
+
+            guard sqlite3_step(statement) == SQLITE_DONE else {
+                assertionFailure("Failed to assign workspace: \(String(cString: sqlite3_errmsg(db)))")
+                return
+            }
+        }
+
+        postWorkspaceChangeNotification()
+    }
+
+    func fetchWorkspaces() -> [CommandWorkspace] {
+        databaseManager.withConnection { db in
+            let sql = """
+            SELECT
+                w.id,
+                w.name,
+                w.created_at,
+                COUNT(c.id)
+            FROM workspaces w
+            LEFT JOIN commands c ON c.workspace_id = w.id
+            GROUP BY w.id
+            ORDER BY LOWER(w.name) ASC, w.created_at ASC;
+            """
+
+            guard let statement = prepareStatement(sql, in: db) else { return [] }
+            defer { sqlite3_finalize(statement) }
+
+            var workspaces: [CommandWorkspace] = []
+            while sqlite3_step(statement) == SQLITE_ROW {
+                guard let idPointer = sqlite3_column_text(statement, 0),
+                      let namePointer = sqlite3_column_text(statement, 1) else {
+                    continue
+                }
+
+                workspaces.append(
+                    CommandWorkspace(
+                        id: String(cString: idPointer),
+                        name: String(cString: namePointer),
+                        createdAt: TimeInterval(sqlite3_column_int64(statement, 2)),
+                        commandCount: Int(sqlite3_column_int(statement, 3))
+                    )
+                )
+            }
+
+            return workspaces
+        }
+    }
+
+    func createWorkspace(name: String) throws -> CommandWorkspace {
+        let normalizedName = try normalizeWorkspaceName(name)
+        let createdWorkspace = databaseManager.withConnection { db -> CommandWorkspace? in
+            if workspaceExists(name: normalizedName, excludingID: nil, in: db) {
+                return nil
+            }
+
+            let id = UUID().uuidString
+            let now = Int64(Date().timeIntervalSince1970)
+            let sql = """
+            INSERT INTO workspaces (id, name, created_at)
+            VALUES (?, ?, ?);
+            """
+
+            guard let statement = prepareStatement(sql, in: db) else { return nil }
+            defer { sqlite3_finalize(statement) }
+
+            bindText(id, to: statement, at: 1)
+            bindText(normalizedName, to: statement, at: 2)
+            sqlite3_bind_int64(statement, 3, now)
+
+            guard sqlite3_step(statement) == SQLITE_DONE else {
+                assertionFailure("Failed to create workspace: \(String(cString: sqlite3_errmsg(db)))")
+                return nil
+            }
+
+            return CommandWorkspace(
+                id: id,
+                name: normalizedName,
+                createdAt: TimeInterval(now),
+                commandCount: 0
+            )
+        }
+
+        guard let createdWorkspace else {
+            throw WorkspaceStoreError.duplicateName
+        }
+
+        postWorkspaceChangeNotification()
+        return createdWorkspace
+    }
+
+    func renameWorkspace(id: String, name: String) throws {
+        let normalizedName = try normalizeWorkspaceName(name)
+        let renamed = databaseManager.withConnection { db in
+            guard !workspaceExists(name: normalizedName, excludingID: id, in: db) else {
+                return false
+            }
+
+            let sql = "UPDATE workspaces SET name = ? WHERE id = ?;"
+            guard let statement = prepareStatement(sql, in: db) else { return false }
+            defer { sqlite3_finalize(statement) }
+
+            bindText(normalizedName, to: statement, at: 1)
+            bindText(id, to: statement, at: 2)
+
+            guard sqlite3_step(statement) == SQLITE_DONE else {
+                assertionFailure("Failed to rename workspace: \(String(cString: sqlite3_errmsg(db)))")
+                return false
+            }
+
+            return sqlite3_changes(db) > 0
+        }
+
+        guard renamed else {
+            throw WorkspaceStoreError.duplicateName
+        }
+
+        postWorkspaceChangeNotification()
+    }
+
+    func deleteWorkspace(id: String) {
+        databaseManager.withConnection { db in
+            executeDelete(
+                sql: "UPDATE commands SET workspace_id = NULL WHERE workspace_id = ?;",
+                value: id,
+                in: db
+            )
+            executeDelete(
+                sql: "DELETE FROM workspaces WHERE id = ?;",
+                value: id,
+                in: db
+            )
+        }
+
+        postWorkspaceChangeNotification()
+    }
+
+    private func fetchOrInsertCommandID(
+        command: String,
+        category: String,
+        now: Int64,
+        in db: OpaquePointer
+    ) -> String {
         if let existingID = fetchCommandID(command: command, in: db) {
             return existingID
         }
 
         let id = UUID().uuidString
         let sql = """
-        INSERT INTO commands (id, command, usage_count, last_used_at, created_at)
-        VALUES (?, ?, 0, NULL, ?);
+        INSERT INTO commands (id, command, category, is_favorite, alias, note, workspace_id, usage_count, last_used_at, created_at)
+        VALUES (?, ?, ?, 0, NULL, NULL, NULL, 0, NULL, ?);
         """
 
         guard let statement = prepareStatement(sql, in: db) else {
@@ -178,7 +425,8 @@ final class StorageService: CommandStoring {
 
         bindText(id, to: statement, at: 1)
         bindText(command, to: statement, at: 2)
-        sqlite3_bind_int64(statement, 3, now)
+        bindText(category, to: statement, at: 3)
+        sqlite3_bind_int64(statement, 4, now)
 
         guard sqlite3_step(statement) == SQLITE_DONE else {
             assertionFailure("Failed to insert command: \(String(cString: sqlite3_errmsg(db)))")
@@ -416,37 +664,45 @@ final class StorageService: CommandStoring {
 
     private func fetchGlobalCandidateIDs(
         query: String,
+        filters: SearchFilters,
         limit: Int,
         in db: OpaquePointer
     ) -> [String] {
         let bindsPattern = !query.isEmpty
-        let sql: String
+        var conditions: [String] = []
 
         if bindsPattern {
-            sql = """
-            SELECT id
-            FROM commands
-            WHERE LOWER(command) LIKE ? ESCAPE '\\'
-            ORDER BY usage_count DESC, last_used_at DESC, created_at DESC
-            LIMIT ?;
-            """
-        } else {
-            sql = """
-            SELECT id
-            FROM commands
-            ORDER BY usage_count DESC, last_used_at DESC, created_at DESC
-            LIMIT ?;
-            """
+            conditions.append(
+                """
+                (
+                    LOWER(command) LIKE ? ESCAPE '\\'
+                    OR LOWER(COALESCE(alias, '')) LIKE ? ESCAPE '\\'
+                )
+                """
+            )
         }
+        conditions.append(contentsOf: filterConditions(for: filters, tableAlias: nil))
+
+        let whereClause = conditions.isEmpty ? "" : "WHERE \(conditions.joined(separator: " AND "))"
+        let sql = """
+        SELECT id
+        FROM commands
+        \(whereClause)
+        ORDER BY usage_count DESC, last_used_at DESC, created_at DESC
+        LIMIT ?;
+        """
 
         guard let statement = prepareStatement(sql, in: db) else { return [] }
         defer { sqlite3_finalize(statement) }
 
         var bindIndex: Int32 = 1
         if bindsPattern {
-            bindText(subsequenceLikePattern(for: query), to: statement, at: bindIndex)
-            bindIndex += 1
+            let pattern = subsequenceLikePattern(for: query)
+            bindText(pattern, to: statement, at: bindIndex)
+            bindText(pattern, to: statement, at: bindIndex + 1)
+            bindIndex += 2
         }
+        bindIndex = bindFilters(filters, to: statement, startingAt: bindIndex)
         sqlite3_bind_int(statement, bindIndex, Int32(limit))
 
         return fetchIDRows(from: statement)
@@ -455,6 +711,7 @@ final class StorageService: CommandStoring {
     private func fetchContextCandidateIDs(
         query: String,
         filter: ContextFilter,
+        filters: SearchFilters,
         limit: Int,
         in db: OpaquePointer
     ) -> [String] {
@@ -468,11 +725,25 @@ final class StorageService: CommandStoring {
             filterClause = "LOWER(cc.env) = ?"
         }
 
+        var conditions: [String] = []
+        if bindsPattern {
+            conditions.append(
+                """
+                (
+                    LOWER(c.command) LIKE ? ESCAPE '\\'
+                    OR LOWER(COALESCE(c.alias, '')) LIKE ? ESCAPE '\\'
+                )
+                """
+            )
+        }
+        conditions.append(filterClause)
+        conditions.append(contentsOf: filterConditions(for: filters, tableAlias: "c"))
+
         let sql = """
         SELECT c.id
         FROM commands c
         JOIN command_contexts cc ON cc.command_id = c.id
-        WHERE \(bindsPattern ? "LOWER(c.command) LIKE ? ESCAPE '\\\\' AND " : "")\(filterClause)
+        WHERE \(conditions.joined(separator: " AND "))
         GROUP BY c.id
         ORDER BY
             MAX(cc.usage_count) DESC,
@@ -489,8 +760,10 @@ final class StorageService: CommandStoring {
 
         var bindIndex: Int32 = 1
         if bindsPattern {
-            bindText(subsequenceLikePattern(for: query), to: statement, at: bindIndex)
-            bindIndex += 1
+            let pattern = subsequenceLikePattern(for: query)
+            bindText(pattern, to: statement, at: bindIndex)
+            bindText(pattern, to: statement, at: bindIndex + 1)
+            bindIndex += 2
         }
 
         switch filter {
@@ -500,7 +773,9 @@ final class StorageService: CommandStoring {
             bindText(env, to: statement, at: bindIndex)
         }
 
-        sqlite3_bind_int(statement, bindIndex + 1, Int32(limit))
+        bindIndex += 1
+        bindIndex = bindFilters(filters, to: statement, startingAt: bindIndex)
+        sqlite3_bind_int(statement, bindIndex, Int32(limit))
         return fetchIDRows(from: statement)
     }
 
@@ -541,7 +816,17 @@ final class StorageService: CommandStoring {
         let placeholders = ids.map { _ in "?" }.joined(separator: ",")
 
         let commandsSQL = """
-        SELECT id, command, usage_count, last_used_at, created_at
+        SELECT
+            id,
+            command,
+            category,
+            is_favorite,
+            alias,
+            note,
+            workspace_id,
+            usage_count,
+            last_used_at,
+            created_at
         FROM commands
         WHERE id IN (\(placeholders));
         """
@@ -554,6 +839,11 @@ final class StorageService: CommandStoring {
         struct CommandRow {
             let id: String
             let command: String
+            let category: String
+            let isFavorite: Bool
+            let alias: String?
+            let note: String?
+            let workspaceID: String?
             let usageCount: Int
             let lastUsedAt: TimeInterval?
             let createdAt: TimeInterval
@@ -570,9 +860,14 @@ final class StorageService: CommandStoring {
             commandRowsByID[id] = CommandRow(
                 id: id,
                 command: String(cString: commandPointer),
-                usageCount: Int(sqlite3_column_int(commandsStatement, 2)),
-                lastUsedAt: readNullableTime(at: 3, from: commandsStatement),
-                createdAt: TimeInterval(sqlite3_column_int64(commandsStatement, 4))
+                category: readNullableText(at: 2, from: commandsStatement) ?? "General",
+                isFavorite: sqlite3_column_int(commandsStatement, 3) == 1,
+                alias: readNullableText(at: 4, from: commandsStatement),
+                note: readNullableText(at: 5, from: commandsStatement),
+                workspaceID: readNullableText(at: 6, from: commandsStatement),
+                usageCount: Int(sqlite3_column_int(commandsStatement, 7)),
+                lastUsedAt: readNullableTime(at: 8, from: commandsStatement),
+                createdAt: TimeInterval(sqlite3_column_int64(commandsStatement, 9))
             )
         }
 
@@ -601,6 +896,11 @@ final class StorageService: CommandStoring {
                 return CommandItem(
                     id: row.id,
                     command: row.command,
+                    category: row.category,
+                    isFavorite: row.isFavorite,
+                    alias: row.alias,
+                    note: row.note,
+                    workspaceID: row.workspaceID,
                     usageCount: row.usageCount,
                     lastUsedAt: row.lastUsedAt,
                     createdAt: row.createdAt,
@@ -644,6 +944,11 @@ final class StorageService: CommandStoring {
             return CommandItem(
                 id: row.id,
                 command: row.command,
+                category: row.category,
+                isFavorite: row.isFavorite,
+                alias: row.alias,
+                note: row.note,
+                workspaceID: row.workspaceID,
                 usageCount: row.usageCount,
                 lastUsedAt: row.lastUsedAt,
                 createdAt: row.createdAt,
@@ -718,6 +1023,43 @@ final class StorageService: CommandStoring {
         return TimeInterval(sqlite3_column_int64(statement, index))
     }
 
+    private func filterConditions(for filters: SearchFilters, tableAlias: String?) -> [String] {
+        let prefix = tableAlias.map { "\($0)." } ?? ""
+        var conditions: [String] = []
+
+        if filters.favoritesOnly {
+            conditions.append("\(prefix)is_favorite = 1")
+        }
+        if filters.category != nil {
+            conditions.append("\(prefix)category = ?")
+        }
+        if filters.workspaceID != nil {
+            conditions.append("\(prefix)workspace_id = ?")
+        }
+
+        return conditions
+    }
+
+    private func bindFilters(
+        _ filters: SearchFilters,
+        to statement: OpaquePointer?,
+        startingAt index: Int32
+    ) -> Int32 {
+        var bindIndex = index
+
+        if let category = filters.category {
+            bindText(category, to: statement, at: bindIndex)
+            bindIndex += 1
+        }
+
+        if let workspaceID = filters.workspaceID {
+            bindText(workspaceID, to: statement, at: bindIndex)
+            bindIndex += 1
+        }
+
+        return bindIndex
+    }
+
     private func subsequenceLikePattern(for query: String) -> String {
         let escaped = query.lowercased().map { character -> String in
             switch character {
@@ -757,5 +1099,68 @@ final class StorageService: CommandStoring {
             env: CommandContext.normalizeEnv(context.env),
             sourceApp: CommandContext.normalizeSourceAppKey(context.sourceApp)
         )
+    }
+
+    private func updateMetadataColumn(_ column: String, value: String?, commandID: String) {
+        databaseManager.withConnection { db in
+            let sql = "UPDATE commands SET \(column) = ? WHERE id = ?;"
+            guard let statement = prepareStatement(sql, in: db) else { return }
+            defer { sqlite3_finalize(statement) }
+
+            bindOptionalText(value, to: statement, at: 1)
+            bindText(commandID, to: statement, at: 2)
+
+            guard sqlite3_step(statement) == SQLITE_DONE else {
+                assertionFailure("Failed to update \(column): \(String(cString: sqlite3_errmsg(db)))")
+                return
+            }
+        }
+    }
+
+    private func normalizeOptionalText(_ value: String?) -> String? {
+        guard let trimmed = value?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !trimmed.isEmpty else {
+            return nil
+        }
+
+        return trimmed
+    }
+
+    private func normalizeWorkspaceName(_ name: String) throws -> String {
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            throw WorkspaceStoreError.emptyName
+        }
+
+        return trimmed
+    }
+
+    private func workspaceExists(
+        name: String,
+        excludingID excludedID: String?,
+        in db: OpaquePointer
+    ) -> Bool {
+        let sql = """
+        SELECT 1
+        FROM workspaces
+        WHERE name = ?
+          AND (? IS NULL OR id != ?)
+        LIMIT 1;
+        """
+
+        guard let statement = prepareStatement(sql, in: db) else { return false }
+        defer { sqlite3_finalize(statement) }
+
+        bindText(name, to: statement, at: 1)
+        bindOptionalText(excludedID, to: statement, at: 2)
+        bindOptionalText(excludedID, to: statement, at: 3)
+
+        return sqlite3_step(statement) == SQLITE_ROW
+    }
+
+    private func postWorkspaceChangeNotification() {
+        DispatchQueue.main.async {
+            NotificationCenter.default.post(name: .workspacesDidChange, object: nil)
+        }
     }
 }

@@ -6,8 +6,7 @@ struct CommandHubApp: App {
 
     var body: some Scene {
         Settings {
-            Text("Settings")
-                .frame(width: 300, height: 200)
+            WorkspaceSettingsView()
         }
     }
 }

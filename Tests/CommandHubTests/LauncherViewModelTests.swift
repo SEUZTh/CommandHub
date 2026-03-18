@@ -23,10 +23,14 @@ final class LauncherViewModelTests: XCTestCase {
             makeResult(id: "1", command: "git status"),
             makeResult(id: "2", command: "git checkout")
         ]
-        search.handler = { query, currentContext, scope, sessionBaseline in
+        storage.workspaces = [
+            CommandWorkspace(id: "workspace-1", name: "Prod", createdAt: 1, commandCount: 2)
+        ]
+        search.handler = { query, currentContext, scope, filters, sessionBaseline in
             XCTAssertEqual(query, "")
             XCTAssertEqual(currentContext?.domain, "prod.example.com")
             XCTAssertEqual(scope, .all)
+            XCTAssertEqual(filters, .default)
             XCTAssertNil(sessionBaseline)
             return expectedItems
         }
@@ -50,6 +54,7 @@ final class LauncherViewModelTests: XCTestCase {
         XCTAssertEqual(viewModel.selection, expectedItems.first?.id)
         XCTAssertEqual(viewModel.contextStatusText, "Current: prod.example.com (prod)")
         XCTAssertTrue(viewModel.isCurrentEnvOnlyAvailable)
+        XCTAssertEqual(viewModel.workspaces, storage.workspaces)
     }
 
     func testCopySelectedOrFirstCopiesMarksMatchedContextWithoutRefreshingResults() {
@@ -87,7 +92,7 @@ final class LauncherViewModelTests: XCTestCase {
             )
         )
 
-        search.handler = { _, _, _, _ in [item] }
+        search.handler = { _, _, _, _, _ in [item] }
 
         let viewModel = LauncherViewModel(
             storageService: storage,
@@ -210,7 +215,7 @@ final class LauncherViewModelTests: XCTestCase {
             )
         )
 
-        search.handler = { _, _, _, _ in [item] }
+        search.handler = { _, _, _, _, _ in [item] }
 
         let viewModel = LauncherViewModel(
             storageService: storage,
@@ -253,7 +258,7 @@ final class LauncherViewModelTests: XCTestCase {
         let originalSecond = makeResult(id: "2", command: "git beta")
         let reordered = [originalSecond, originalFirst]
 
-        search.handler = { _, _, _, _ in reordered }
+        search.handler = { _, _, _, _, _ in reordered }
 
         var queuedSearchWork: [() -> Void] = []
         let viewModel = LauncherViewModel(
@@ -277,6 +282,56 @@ final class LauncherViewModelTests: XCTestCase {
         XCTAssertEqual(viewModel.results, [originalFirst, originalSecond])
         XCTAssertEqual(viewModel.selection, originalSecond.id)
         XCTAssertEqual(clipboard.copiedTexts, [originalSecond.command.command])
+    }
+
+    func testSearchKeepsSelectionWhenSelectedItemStillExists() {
+        let kept = makeResult(id: "keep", command: "git status")
+        let moved = makeResult(id: "move", command: "git checkout")
+
+        let search = SearchServiceSpy()
+        search.handler = { _, _, _, _, _ in [moved, kept] }
+
+        let updatedViewModel = LauncherViewModel(
+            storageService: StorageServiceSpy(),
+            searchService: search,
+            clipboardService: ClipboardSpy(),
+            contextResolver: ContextResolverSpy(
+                resolution: ContextResolution(context: nil, status: .noWebContext(appName: "Unknown"))
+            ),
+            searchExecutor: { $0() },
+            resultExecutor: { $0() }
+        )
+        updatedViewModel.results = [kept, moved]
+        updatedViewModel.selection = kept.id
+
+        updatedViewModel.search()
+
+        XCTAssertEqual(updatedViewModel.selection, kept.id)
+    }
+
+    func testSearchFallsBackToAdjacentSelectionWhenSelectedItemDisappears() {
+        let search = SearchServiceSpy()
+        let first = makeResult(id: "1", command: "git alpha")
+        let second = makeResult(id: "2", command: "git beta")
+        let third = makeResult(id: "3", command: "git gamma")
+        search.handler = { _, _, _, _, _ in [first, third] }
+
+        let viewModel = LauncherViewModel(
+            storageService: StorageServiceSpy(),
+            searchService: search,
+            clipboardService: ClipboardSpy(),
+            contextResolver: ContextResolverSpy(
+                resolution: ContextResolution(context: nil, status: .noWebContext(appName: "Unknown"))
+            ),
+            searchExecutor: { $0() },
+            resultExecutor: { $0() }
+        )
+        viewModel.results = [first, second, third]
+        viewModel.selection = second.id
+
+        viewModel.search()
+
+        XCTAssertEqual(viewModel.selection, third.id)
     }
 
     private func makeResult(
@@ -310,6 +365,7 @@ private final class StorageServiceSpy: CommandStoring {
     }
 
     private(set) var markUsedCalls: [MarkUsedCall] = []
+    var workspaces: [CommandWorkspace] = []
 
     func save(command: String, context: CommandContext?) {}
 
@@ -317,6 +373,7 @@ private final class StorageServiceSpy: CommandStoring {
         query: String,
         currentContext: CommandContext?,
         scope: SearchScope,
+        filters: SearchFilters,
         limit: Int
     ) -> [CommandItem] {
         []
@@ -332,17 +389,22 @@ private final class StorageServiceSpy: CommandStoring {
         )
     }
 
+    func fetchWorkspaces() -> [CommandWorkspace] {
+        workspaces
+    }
+
     func delete(id: String) {}
 }
 
 private final class SearchServiceSpy: CommandSearching {
-    var handler: (String, CommandContext?, SearchScope, SearchSessionBaseline?) -> [SearchResultItem] = {
-        _, _, _, _ in []
+    var handler: (String, CommandContext?, SearchScope, SearchFilters, SearchSessionBaseline?) -> [SearchResultItem] = {
+        _, _, _, _, _ in []
     }
     private(set) var receivedQueries: [(
         query: String,
         context: CommandContext?,
         scope: SearchScope,
+        filters: SearchFilters,
         sessionBaseline: SearchSessionBaseline?
     )] = []
 
@@ -350,10 +412,11 @@ private final class SearchServiceSpy: CommandSearching {
         query: String,
         currentContext: CommandContext?,
         scope: SearchScope,
+        filters: SearchFilters,
         sessionBaseline: SearchSessionBaseline?
     ) -> [SearchResultItem] {
-        receivedQueries.append((query, currentContext, scope, sessionBaseline))
-        return handler(query, currentContext, scope, sessionBaseline)
+        receivedQueries.append((query, currentContext, scope, filters, sessionBaseline))
+        return handler(query, currentContext, scope, filters, sessionBaseline)
     }
 }
 

@@ -5,6 +5,7 @@ protocol CommandSearching {
         query: String,
         currentContext: CommandContext?,
         scope: SearchScope,
+        filters: SearchFilters,
         sessionBaseline: SearchSessionBaseline?
     ) -> [SearchResultItem]
 }
@@ -13,12 +14,29 @@ extension CommandSearching {
     func search(
         query: String,
         currentContext: CommandContext?,
-        scope: SearchScope
+        scope: SearchScope,
+        sessionBaseline: SearchSessionBaseline?
     ) -> [SearchResultItem] {
         search(
             query: query,
             currentContext: currentContext,
             scope: scope,
+            filters: .default,
+            sessionBaseline: sessionBaseline
+        )
+    }
+
+    func search(
+        query: String,
+        currentContext: CommandContext?,
+        scope: SearchScope,
+        filters: SearchFilters = .default
+    ) -> [SearchResultItem] {
+        search(
+            query: query,
+            currentContext: currentContext,
+            scope: scope,
+            filters: filters,
             sessionBaseline: nil
         )
     }
@@ -28,6 +46,7 @@ extension CommandSearching {
             query: query,
             currentContext: nil,
             scope: .all,
+            filters: .default,
             sessionBaseline: nil
         )
     }
@@ -122,6 +141,11 @@ struct SearchSessionBaseline: Equatable {
         return CommandItem(
             id: item.id,
             command: item.command,
+            category: item.category,
+            isFavorite: item.isFavorite,
+            alias: item.alias,
+            note: item.note,
+            workspaceID: item.workspaceID,
             usageCount: commandSnapshot?.usageCount ?? item.usageCount,
             lastUsedAt: commandSnapshot?.lastUsedAt ?? item.lastUsedAt,
             createdAt: item.createdAt,
@@ -187,7 +211,10 @@ enum CommandScorer {
         currentContext: CommandContext?,
         now: TimeInterval = Date().timeIntervalSince1970
     ) -> SearchResultItem? {
-        let textMatch = FuzzyMatcher.matchScore(query: query, target: item.command)
+        let commandMatch = FuzzyMatcher.matchScore(query: query, target: item.command)
+        let aliasMatch = item.alias.map { FuzzyMatcher.matchScore(query: query, target: $0) } ?? 0
+        let noteMatch = item.note.map { FuzzyMatcher.matchScore(query: query, target: $0) } ?? 0
+        let textMatch = max(commandMatch, aliasMatch, noteMatch * 0.35)
         guard textMatch > 0 else { return nil }
 
         let globalUsage = usageScore(item.usageCount)
@@ -195,13 +222,15 @@ enum CommandScorer {
         let match = matchedContext(for: item, currentContext: currentContext, now: now)
         let contextAffinity = match.map { affinity(for: $0, currentContext: currentContext) } ?? 0
         let contextBehavior = match.map { behaviorScore(for: $0, now: now) } ?? 0
+        let favoriteBonus = item.isFavorite ? 1.0 : 0.0
 
         let score =
-            (textMatch * 0.40) +
-            (globalUsage * 0.20) +
+            (textMatch * 0.35) +
+            (globalUsage * 0.15) +
             (globalRecency * 0.10) +
             (contextAffinity * 0.20) +
-            (contextBehavior * 0.10)
+            (contextBehavior * 0.10) +
+            (favoriteBonus * 0.10)
 
         let displayContext: CommandContextStat?
         if currentContext == nil {
@@ -354,6 +383,7 @@ final class SearchService: CommandSearching {
         query: String,
         currentContext: CommandContext?,
         scope: SearchScope,
+        filters: SearchFilters,
         sessionBaseline: SearchSessionBaseline? = nil
     ) -> [SearchResultItem] {
         let normalizedQuery = query.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -363,6 +393,7 @@ final class SearchService: CommandSearching {
             query: normalizedQuery,
             currentContext: currentContext,
             scope: scope,
+            filters: filters,
             limit: effectiveLimit
         )
 
@@ -405,6 +436,9 @@ final class SearchService: CommandSearching {
             .sorted { lhs, rhs in
                 if lhs.score != rhs.score {
                     return lhs.score > rhs.score
+                }
+                if lhs.command.isFavorite != rhs.command.isFavorite {
+                    return lhs.command.isFavorite && !rhs.command.isFavorite
                 }
                 if lhs.command.usageCount != rhs.command.usageCount {
                     return lhs.command.usageCount > rhs.command.usageCount

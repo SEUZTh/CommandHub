@@ -215,6 +215,98 @@ final class SearchServiceTests: XCTestCase {
         )
     }
 
+    func testSearchMatchesUserAlias() throws {
+        let storage = makeStorageHarness().storage
+        storage.save(command: "kubectl get namespaces")
+        let item = try XCTUnwrap(storage.fetchCandidates(query: "", limit: 1).first)
+        storage.updateAlias(commandID: item.id, alias: "pods")
+
+        let searchService = SearchService(storageService: storage)
+        let results = searchService.search(query: "pods")
+
+        XCTAssertEqual(results.first?.command.command, "kubectl get namespaces")
+        XCTAssertEqual(results.first?.command.alias, "pods")
+    }
+
+    func testNoteDoesNotExpandSQLCandidateRecall() throws {
+        let storage = makeStorageHarness().storage
+        storage.save(command: "git status")
+        let item = try XCTUnwrap(storage.fetchCandidates(query: "", limit: 1).first)
+        storage.updateNote(commandID: item.id, note: "production cluster checklist")
+
+        let searchService = SearchService(storageService: storage)
+        XCTAssertTrue(searchService.search(query: "production").isEmpty)
+    }
+
+    func testFavoriteBonusReordersMatchedCandidatesButDoesNotRecallUnmatchedItems() {
+        let favorite = makeItem(
+            id: "favorite",
+            command: "git beta",
+            isFavorite: true,
+            usageCount: 0,
+            lastUsedAt: nil,
+            createdAt: 1,
+            contexts: []
+        )
+        let regular = makeItem(
+            id: "regular",
+            command: "git alpha",
+            usageCount: 0,
+            lastUsedAt: nil,
+            createdAt: 1,
+            contexts: []
+        )
+
+        let matched = SearchService.sort(
+            [regular, favorite],
+            query: "git",
+            currentContext: nil
+        )
+        XCTAssertEqual(matched.first?.command.id, favorite.id)
+
+        let unmatchedFavorite = makeItem(
+            id: "unmatched",
+            command: "docker ps",
+            isFavorite: true,
+            usageCount: 100,
+            lastUsedAt: Date().timeIntervalSince1970,
+            createdAt: 1,
+            contexts: []
+        )
+        XCTAssertTrue(
+            SearchService.sort([unmatchedFavorite], query: "git", currentContext: nil).isEmpty
+        )
+    }
+
+    func testFiltersRestrictFavoritesCategoryAndWorkspace() throws {
+        let storage = makeStorageHarness().storage
+        storage.save(command: "git status")
+        storage.save(command: "docker ps")
+
+        let commands = storage.fetchCandidates(query: "", limit: 10)
+        let git = try XCTUnwrap(commands.first(where: { $0.command == "git status" }))
+        let docker = try XCTUnwrap(commands.first(where: { $0.command == "docker ps" }))
+        let workspace = try storage.createWorkspace(name: "Platform")
+
+        storage.toggleFavorite(commandID: git.id)
+        storage.assignWorkspace(commandID: git.id, workspaceID: workspace.id)
+        storage.assignWorkspace(commandID: docker.id, workspaceID: workspace.id)
+
+        let searchService = SearchService(storageService: storage)
+        let results = searchService.search(
+            query: "",
+            currentContext: nil,
+            scope: .all,
+            filters: SearchFilters(
+                favoritesOnly: true,
+                category: "Git",
+                workspaceID: workspace.id
+            )
+        )
+
+        XCTAssertEqual(results.map(\.command.command), ["git status"])
+    }
+
     func testSessionBaselineKeepsCopiedCommandFromJumpingAheadUntilNextSession() throws {
         let storage = makeStorageHarness().storage
         storage.save(command: "git alpha")
@@ -337,6 +429,11 @@ final class SearchServiceTests: XCTestCase {
     private func makeItem(
         id: String,
         command: String,
+        category: String = "General",
+        isFavorite: Bool = false,
+        alias: String? = nil,
+        note: String? = nil,
+        workspaceID: String? = nil,
         usageCount: Int,
         lastUsedAt: TimeInterval?,
         createdAt: TimeInterval,
@@ -345,6 +442,11 @@ final class SearchServiceTests: XCTestCase {
         CommandItem(
             id: id,
             command: command,
+            category: category,
+            isFavorite: isFavorite,
+            alias: alias,
+            note: note,
+            workspaceID: workspaceID,
             usageCount: usageCount,
             lastUsedAt: lastUsedAt,
             createdAt: createdAt,

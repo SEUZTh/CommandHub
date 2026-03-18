@@ -9,8 +9,13 @@ final class LauncherViewModel: ObservableObject {
     @Published var results: [SearchResultItem] = []
     @Published var selection: String?
     @Published var scope: SearchScope = .all
+    @Published var favoritesOnly = false
+    @Published var selectedCategory: String?
+    @Published var selectedWorkspaceID: String?
+    @Published private(set) var workspaces: [CommandWorkspace] = []
     @Published private(set) var contextStatusText = "Current: Unknown, no web context"
     @Published private(set) var isCurrentEnvOnlyAvailable = false
+    @Published var pendingDeleteItem: SearchResultItem?
 
     private static let defaultSearchQueue = DispatchQueue(
         label: "commandhub.launcher.search",
@@ -48,13 +53,46 @@ final class LauncherViewModel: ObservableObject {
         self.resultExecutor = resultExecutor
     }
 
+    var selectedResult: SearchResultItem? {
+        guard let selection else { return nil }
+        return results.first(where: { $0.id == selection })
+    }
+
+    var selectedWorkspace: CommandWorkspace? {
+        guard let workspaceID = selectedResult?.command.workspaceID else { return nil }
+        return workspaces.first(where: { $0.id == workspaceID })
+    }
+
+    var activeFilters: SearchFilters {
+        SearchFilters(
+            favoritesOnly: favoritesOnly,
+            category: selectedCategory,
+            workspaceID: selectedWorkspaceID
+        )
+    }
+
     func activate(frontmostApplication: NSRunningApplication? = nil) {
         query = ""
         selection = nil
         scope = .all
+        favoritesOnly = false
+        selectedCategory = nil
+        selectedWorkspaceID = nil
+        pendingDeleteItem = nil
         sessionBaseline = SearchSessionBaseline()
         refreshContext(frontmostApplication: frontmostApplication)
+        reloadWorkspaces()
         search()
+    }
+
+    func reloadWorkspaces() {
+        workspaces = storageService.fetchWorkspaces()
+
+        if let selectedWorkspaceID,
+           !workspaces.contains(where: { $0.id == selectedWorkspaceID }) {
+            self.selectedWorkspaceID = nil
+            search()
+        }
     }
 
     func setScope(_ newScope: SearchScope) {
@@ -65,11 +103,42 @@ final class LauncherViewModel: ObservableObject {
         search()
     }
 
+    func setFavoritesOnly(_ enabled: Bool) {
+        guard favoritesOnly != enabled else { return }
+        favoritesOnly = enabled
+        search()
+    }
+
+    func setSelectedCategory(_ category: String?) {
+        guard selectedCategory != category else { return }
+        selectedCategory = category
+        search()
+    }
+
+    func setSelectedWorkspaceID(_ workspaceID: String?) {
+        guard selectedWorkspaceID != workspaceID else { return }
+        selectedWorkspaceID = workspaceID
+        search()
+    }
+
+    func resetSecondaryFilters() {
+        guard !activeFilters.isDefault else { return }
+        favoritesOnly = false
+        selectedCategory = nil
+        selectedWorkspaceID = nil
+        search()
+    }
+
     func search() {
         let currentQuery = query
         let currentScope = effectiveSearchScope
         let context = currentContext
+        let filters = activeFilters
         let sessionBaseline = self.sessionBaseline.isEmpty ? nil : self.sessionBaseline
+        let previousSelection = selection
+        let previousIndex = previousSelection.flatMap { selectedID in
+            results.firstIndex(where: { $0.id == selectedID })
+        }
 
         searchGeneration += 1
         let generation = searchGeneration
@@ -81,6 +150,7 @@ final class LauncherViewModel: ObservableObject {
                 query: currentQuery,
                 currentContext: context,
                 scope: currentScope,
+                filters: filters,
                 sessionBaseline: sessionBaseline
             )
 
@@ -89,13 +159,17 @@ final class LauncherViewModel: ObservableObject {
                 guard generation == self.searchGeneration, currentQuery == self.query else { return }
 
                 self.results = items
-                self.updateSelectionIfNeeded()
+                self.updateSelectionIfNeeded(
+                    previousSelection: previousSelection,
+                    previousIndex: previousIndex
+                )
             }
         }
     }
 
-    func copySelectedOrFirst() {
-        guard !results.isEmpty else { return }
+    @discardableResult
+    func copySelectedOrFirst() -> SearchResultItem? {
+        guard !results.isEmpty else { return nil }
 
         let item: SearchResultItem
         if let selection, let match = results.first(where: { $0.id == selection }) {
@@ -105,12 +179,6 @@ final class LauncherViewModel: ObservableObject {
             self.selection = item.id
         }
 
-        select(item)
-    }
-
-    func select(_ item: SearchResultItem) {
-        // Invalidate any in-flight searches so they can't reapply reordered data
-        // after this copy updates usage stats.
         searchGeneration += 1
         selection = item.id
         sessionBaseline.recordSelection(item, currentContext: currentContext)
@@ -120,6 +188,12 @@ final class LauncherViewModel: ObservableObject {
             matchedContextID: item.matchedContext?.id,
             fallbackContext: currentContext
         )
+
+        return item
+    }
+
+    func select(_ item: SearchResultItem) {
+        selection = item.id
     }
 
     func moveSelection(_ direction: MoveCommandDirection) {
@@ -140,6 +214,47 @@ final class LauncherViewModel: ObservableObject {
         selection = results[nextIndex].id
     }
 
+    func toggleFavoriteForSelection() {
+        guard let item = selectedResult else { return }
+        storageService.toggleFavorite(commandID: item.command.id)
+        search()
+    }
+
+    func updateAliasForSelection(_ alias: String?) {
+        guard let item = selectedResult else { return }
+        storageService.updateAlias(commandID: item.command.id, alias: alias)
+        search()
+    }
+
+    func updateNoteForSelection(_ note: String?) {
+        guard let item = selectedResult else { return }
+        storageService.updateNote(commandID: item.command.id, note: note)
+        search()
+    }
+
+    func assignWorkspaceToSelection(_ workspaceID: String?) {
+        guard let item = selectedResult else { return }
+        storageService.assignWorkspace(commandID: item.command.id, workspaceID: workspaceID)
+        reloadWorkspaces()
+        search()
+    }
+
+    func requestDeleteSelection() {
+        pendingDeleteItem = selectedResult
+    }
+
+    func cancelDeleteSelection() {
+        pendingDeleteItem = nil
+    }
+
+    func confirmDeleteSelection() {
+        guard let item = pendingDeleteItem else { return }
+        pendingDeleteItem = nil
+        storageService.delete(id: item.command.id)
+        reloadWorkspaces()
+        search()
+    }
+
     private var effectiveSearchScope: SearchScope {
         isCurrentEnvOnlyAvailable ? scope : .all
     }
@@ -155,10 +270,23 @@ final class LauncherViewModel: ObservableObject {
         }
     }
 
-    private func updateSelectionIfNeeded() {
+    private func updateSelectionIfNeeded(previousSelection: String?, previousIndex: Int?) {
         if let selection, results.contains(where: { $0.id == selection }) {
             return
         }
+
+        if let previousSelection,
+           results.contains(where: { $0.id == previousSelection }) {
+            selection = previousSelection
+            return
+        }
+
+        if let previousIndex, !results.isEmpty {
+            let clampedIndex = min(previousIndex, results.count - 1)
+            selection = results[clampedIndex].id
+            return
+        }
+
         selection = results.first?.id
     }
 }
